@@ -879,6 +879,23 @@ html[data-janela="enxame"] .enxame{display:block}
 .enxame-remoto[hidden]{display:none}
 .enxame-remoto-grade{display:grid;grid-template-columns:1fr 1fr;gap:16px}
 @media (max-width:900px){.enxame-remoto-grade{grid-template-columns:1fr}}
+/* A linha de evento saía colada — `0 07:40:28grok (beta)`, sem ar entre etapa, hora e
+   nota. O próprio L3b declarou o defeito no laudo em vez de deixar passar, o que é o
+   comportamento certo: apontar o que ficou torto vale mais que um relatório limpo.
+   Flex com `gap` em vez de espaço no HTML: espaço em marcação some no minificador e
+   volta a colar. A etapa ganha largura fixa para as linhas alinharem em coluna. */
+.enxame-remoto-grade ol{list-style:none;margin:8px 0 0;padding:0;
+  max-height:260px;overflow:auto}
+.enxame-remoto-grade ol li{display:flex;align-items:baseline;gap:10px;
+  padding:4px 0;border-bottom:1px solid var(--borda);
+  font-size:12px;line-height:1.45}
+.enxame-remoto-grade ol li:last-child{border-bottom:0}
+.enxame-remoto-grade ol li b{flex:0 0 1.6em;text-align:right;color:var(--ouro-tinta);
+  font-variant-numeric:tabular-nums}
+.enxame-remoto-grade ol li i{flex:0 0 auto;font-style:normal;color:var(--tinta-3);
+  font-variant-numeric:tabular-nums;letter-spacing:.02em}
+.enxame-remoto-grade ol li span{flex:1;min-width:0;color:var(--tinta-2);
+  overflow-wrap:anywhere}
 .enxame-term{background:var(--carvao-800);color:var(--palha-200);border-radius:var(--raio);
   padding:12px 14px;min-height:220px;max-height:360px;overflow:auto;
   font:12px/1.5 var(--mono);border:1px solid rgba(232,206,142,.14);
