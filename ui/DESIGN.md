@@ -442,3 +442,22 @@ o dono é removido da lista de presença e nunca é alvo de "todas", mesmo estan
 
 Os dois nasceram vermelhos e passaram depois da correção — é o que os torna testes, e não
 carimbos.
+
+---
+
+## 15. A janela IASWARM — o que veio do neon, e o que não veio
+
+A janela dourada lê o mesmo disco que o painel neon. Funções portadas (reatores, doca,
+recolher, filtros, foco, ritmo, transições, teclado) convivem com três peças novas
+aprovadas: modo neon como segundo modo, controle remoto por IA, malha quadriculada
+em ouro.
+
+**Snapshot embutido (`?fonte=snapshot` + objeto `SNAPSHOT`) — omitido, deliberado.**
+No neon, `painel-v2.html` carregava um recorte congelado (fase6 + repos) quando não
+havia servidor HTTP nem pasta escolhida — o HTML sozinho, aberto em `file://`, ainda
+mostrava alguma coisa. Aqui o servidor do app (`servir.py`, rota `/api/iaswarm`)
+garante a leitura do disco; sem ele a interface não existe. Embutir um snapshot
+congelado mentiria a fonte ("ao vivo · disco") e inflaria `sala.js` com um recorte
+que envelhece no dia seguinte. A função perdeu o chão. Quem precisa de uma cópia
+congelada já tem o `export` da sala (`window.CONGELADO`); o enxame, sem disco, diz
+que não tem dados.

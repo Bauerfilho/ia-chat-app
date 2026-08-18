@@ -124,6 +124,60 @@ def main() -> int:
     ):
         checa(f"existe {pedaco}", onde in JS or onde in HTML)
 
+    print("— M4 · foco de teclado sobrevive ao tick —")
+    checa("M4: envelope exTrocando existe", "function exTrocando" in JS)
+    checa("M4: o envelope lê document.activeElement",
+          "function exTrocando" in JS and "document.activeElement" in JS[JS.index("function exTrocando"):JS.index("function exTrocando")+700]
+          if "function exTrocando" in JS else False)
+    checa("M4: devolve o foco com preventScroll",
+          "preventScroll" in JS and "data-foco" in JS)
+    checa("M4: data-foco no recolher do run", 'data-foco="dobra:' in JS)
+    checa("M4: data-foco no abrir da doca", 'data-foco="abre:' in JS)
+    checa("M4: exRender troca o DOM pelo envelope",
+          "exTrocando(EX.reatores" in JS)
+
+    print("— M3 · relógio da última evidência no cartão —")
+    checa("M3: helper exHhmm existe", "function exHhmm" in JS)
+    checa("M3: o cartão imprime entregues · HH:MM",
+          "exHhmm(agora)" in JS and "entregues" in JS)
+    checa("M3: o relógio só aparece com evidência",
+          bool(re.search(r"agora\s*!=\s*null.*exHhmm\(agora\)", JS)))
+
+    print("— M5 · paleta ampla + apelidos, no humor dourado —")
+    checa("M5: mapa EX_ALIAS existe", "const EX_ALIAS" in JS)
+    checa("M5: k2 aponta para kimi", bool(re.search(r'\bk2\s*:\s*[\'"]kimi[\'"]', JS)))
+    checa("M5: dashscope aponta para alibaba",
+          bool(re.search(r'dashscope\s*:\s*[\'"]alibaba[\'"]', JS)))
+    checa("M5: gpt aponta para openai", bool(re.search(r'\bgpt\s*:\s*[\'"]openai[\'"]', JS)))
+    checa("M5: mistral tem cor doutrinada", bool(re.search(r'\bmistral\s*:\s*[\'"]#', JS)))
+    checa("M5: nvidia tem cor doutrinada", bool(re.search(r'\bnvidia\s*:\s*[\'"]#', JS)))
+    checa("M5: azure tem cor doutrinada", bool(re.search(r'\bazure\s*:\s*[\'"]#', JS)))
+    checa("M5: exCorBraco consulta EX_ALIAS",
+          "EX_ALIAS[b]" in JS and "EX_CORES[EX_ALIAS[b]]" in JS)
+
+    print("— M2 · deep link: abrir=worker, swarm=doca —")
+    checa("M2: ?swarm= abre a doca",
+          'q.get("swarm")' in JS or "q.get('swarm')" in JS)
+    checa("M2: ?abrir= não vira doca",
+          not re.search(r"if\s*\(\s*abrir\s*\)\s*EX\.swarm", JS))
+    checa("M2: conjunto EX_ABRIR_URL existe", "EX_ABRIR_URL" in JS)
+    checa("M2: ?abrir= expande o worker na primeira pintura",
+          "EX_ABRIR_URL.has(w.id)" in JS)
+
+    print("— M1 · snapshot: declarado, não portado —")
+    design = (UI / "DESIGN.md").read_text(encoding="utf-8")
+    checa("M1: DESIGN.md registra o snapshot como deliberado",
+          "fonte=snapshot" in design and "deliberado" in design.lower())
+
+    print("— M7 · estreia decorativa, uma vez —")
+    checa("M7: marca estreia só na primeira pintura",
+          "classList.toggle('estreia'" in JS or 'classList.toggle("estreia"' in JS)
+    checa("M7: CSS da entrada existe",
+          "enxame-sobe" in CSS and "#enxame.estreia" in CSS)
+    checa("M7: prefers-reduced-motion desliga a malha e a respiração",
+          "@media (prefers-reduced-motion:reduce)" in CSS
+          and ".enxame-malha" in CSS[CSS.index("@media (prefers-reduced-motion:reduce)"):])
+
     print("— a rota é leitura, e o cliente não escolhe pasta —")
     fonte = SERVIR.read_text(encoding="utf-8")
     checa("existe /api/iaswarm", 'u.path == "/api/iaswarm"' in fonte)

@@ -511,8 +511,9 @@ function painelPaleta(html, rotulo){
   E.paleta.hidden = false;
   const b = $('[data-copiar]', E.paleta);
   if (b) b.addEventListener('click', ()=> copia(b.dataset.copiar));
-  // Confirmação dos comandos que gastam ou matam: o botão carrega o comando e
-  // o payload da previsão; `confirmaComando` acrescenta `confirmado` e chama.
+  // Confirmação dos comandos que gastam ou matam: o botão carrega o comando,
+  // os argumentos e o recibo server-side da previsão; `confirmaComando`
+  // acrescenta `confirmado` e chama.
   $$('[data-confirmar]', E.paleta).forEach(bt =>
     bt.addEventListener('click', ()=> confirmaComando(bt.dataset.confirmar, bt.dataset.payload)));
   $$('[data-cancelar]', E.paleta).forEach(bt =>
@@ -581,7 +582,7 @@ async function rodaQuem(){
    argv constante, texto do dono pelo stdin do comando (`--via-app`), `--de`
    é o papel do servidor. O que gasta ou mata passa por `painelConfirma`:
    a previsão (`seco`) aparece ANTES, e só o botão confirma — o servidor
-   RECUSA o pedido sem `confirmado`, então isto é gate, não cortesia.
+   RECUSA o pedido sem o recibo daquela previsão, então isto é gate, não cortesia.
    Servidor sem a rota (bundle velho) degrada para a linha do terminal. */
 const ROTAS_CMD = {
   '/goal':'/api/goal', '/plan':'/api/plan', '/concluir':'/api/concluir',
@@ -654,8 +655,9 @@ function painelResultado(c, d){
     </div>${aviso}`, `${c.cmd}: resposta do comando`);
 }
 /** Previsão no painel + botão de confirmar. Nada aconteceu ainda: quem prova
-    é o `seco` do CLI; o botão só manda o pedido com `confirmado`. */
-function painelConfirma(c, previsao, payload){
+    é o `seco` do CLI; o botão devolve o recibo emitido pelo servidor. */
+function painelConfirma(c, previsao, payload, recibo){
+  const confirmacao = Object.assign({}, payload || {}, {recibo});
   painelPaleta(`
     <div class="paleta-item">
       <span class="paleta-cmd" translate="no">${c.cmd}</span>
@@ -663,7 +665,7 @@ function painelConfirma(c, previsao, payload){
       <span class="paleta-quem">previsão — nada aconteceu ainda</span>
     </div>
     <button type="button" class="paleta-item" data-confirmar="${c.cmd}"
-            data-payload="${esc(JSON.stringify(payload || {}))}">
+            data-payload="${esc(JSON.stringify(confirmacao))}">
       <span class="paleta-cmd">confirmar</span>
       <span class="paleta-desc">${esc(c.confirma || 'executar agora')}</span>
       <span class="paleta-quem">gasta ou mata</span>
@@ -705,7 +707,7 @@ async function rodaPlan(c, arg){
   const d = await pedeComando(c, {seco: true});
   if (d.degrada) return mostraLinha(c);
   if (d.ok === false || d.erro) return painelResultado(c, d);
-  painelConfirma(c, d.saida, {});
+  painelConfirma(c, d.saida, {}, d.recibo);
 }
 async function rodaConcluir(c, arg){
   painelEspera(c, 'autorizando…');
@@ -718,7 +720,7 @@ async function rodaParar(c){
   const d = await pedeComando(c, {seco: true});
   if (d.degrada) return mostraLinha(c);
   if (d.ok === false || d.erro) return painelResultado(c, d);
-  painelConfirma(c, d.saida, {});
+  painelConfirma(c, d.saida, {}, d.recibo);
 }
 async function rodaRefaz(c, arg){
   if (!arg){
@@ -745,7 +747,7 @@ async function rodaRefaz(c, arg){
   const d = await pedeComando(c, {ia: arg, seco: true});
   if (d.degrada) return mostraLinha(c);
   if (d.ok === false || d.erro) return painelResultado(c, d);
-  painelConfirma(c, d.saida, {ia: arg});
+  painelConfirma(c, d.saida, {ia: arg}, d.recibo);
 }
 async function rodaDecidi(c, arg){
   // A sintaxe do app: `/decidi <a decisão> | <o motivo>`. O motivo é
@@ -1275,11 +1277,29 @@ const EX_CORES = {
   qwen:'#B866CD', ollama:'#E0982A', deepseek:'#4F80F0', hermes:'#C9A227',
   copilot:'#4285F4', dourada:'#C9A227', claude:'#D97757',
   openai:'#12A594', anthropic:'#D97757', google:'#4285F4', gemini:'#4285F4',
+  mistral:'#FF7000', meta:'#0064E0', llama:'#0064E0', cohere:'#39594D',
+  perplexity:'#20808D', groq:'#F55036', together:'#0F6FFF', openrouter:'#6467F2',
+  xai:'#5F6977', nvidia:'#76B900', nim:'#76B900', huggingface:'#B08918',
+  azure:'#0078D4', bedrock:'#FF9900', vertex:'#4285F4', moonshot:'#856EFF',
+  alibaba:'#FF6A00', zhipu:'#3859FF', glm:'#3859FF', minimax:'#E8437E',
+  yi:'#00A6A6', stability:'#8B5CF6', replicate:'#EA4C89', fireworks:'#F0533B',
+  lmstudio:'#4F46E5', vllm:'#00B8D9', llamacpp:'#8FBF3F', cerebras:'#F05A28',
+  sambanova:'#EE3124', baseten:'#3B82F6', modal:'#3E8B3A', fal:'#C026D3',
 };
 const EX_CASCA = {
   qwclaude:'qwen', dsclaude:'deepseek', 'deepseek-claude':'deepseek',
   'ds-claude':'deepseek', qwclaudex:'qwen', 'kimi-claude':'kimi',
   'grok-claude':'grok', 'agy-claude':'agy', hermes2:'hermes',
+};
+const EX_ALIAS = {
+  gpt:'openai','gpt-4':'openai','gpt-5':'openai',o1:'openai',o3:'openai','gpt-oss':'openai',
+  opus:'anthropic',sonnet:'anthropic',haiku:'anthropic',fable:'anthropic',
+  k2:'kimi',k3:'kimi','kimi-k2':'kimi','kimi-k3':'kimi',
+  antigravity:'agy','gemini-flash':'gemini','gemini-pro':'gemini',
+  nemotron:'nvidia',hf:'huggingface',
+  qwen3:'qwen',qwq:'qwen',wan:'qwen',bailian:'alibaba',dashscope:'alibaba',
+  'deepseek-v4':'deepseek',r1:'deepseek',ds:'deepseek',
+  phi:'azure',mixtral:'mistral',codestral:'mistral',magistral:'mistral',
 };
 const EX_TERMINAL = new Set(['entregue','falhou','pulado']);
 const EX_ROTULO = {fila:'na fila',despachado:'despachado',rodando:'trabalhando',
@@ -1289,13 +1309,18 @@ function exCorBraco(braco){
   const b = String(braco||'').toLowerCase().split(':')[0].split('/')[0].trim();
   if (EX_CASCA[b] && EX_CORES[EX_CASCA[b]]) return EX_CORES[EX_CASCA[b]];
   if (EX_CORES[b]) return EX_CORES[b];
+  if (EX_ALIAS[b] && EX_CORES[EX_ALIAS[b]]) return EX_CORES[EX_ALIAS[b]];
   for (const k of Object.keys(EX_CORES)) if (b.startsWith(k)) return EX_CORES[k];
+  for (const k of Object.keys(EX_ALIAS)) if (b.startsWith(k)) return EX_CORES[EX_ALIAS[k]];
   let h = 0; for (let i = 0; i < b.length; i++) h = (h * 31 + b.charCodeAt(i)) >>> 0;
   return `hsl(${40+(h%300)} 42% 42%)`;
 }
 function exSeg(hhmmss){
   const m = /^(\d{1,2}):(\d{2}):(\d{2})$/.exec(String(hhmmss||'').trim());
   return m ? (+m[1])*3600+(+m[2])*60+(+m[3]) : null;
+}
+function exHhmm(s){
+  return s==null ? '—' : `${String(Math.floor(s/3600)).padStart(2,'0')}:${String(Math.floor(s/60)%60).padStart(2,'0')}`;
 }
 function exDur(s){
   if (s == null || s < 0) return '—';
@@ -1403,6 +1428,7 @@ const EX_DOBRA_CHAVE = 'iaswarm.dourado.recolhidos';
 let EX_DOBRADOS = new Set();
 try { EX_DOBRADOS = new Set(JSON.parse(localStorage.getItem(EX_DOBRA_CHAVE)||'[]')); } catch(e){}
 function exGravarDobra(){ try{ localStorage.setItem(EX_DOBRA_CHAVE, JSON.stringify([...EX_DOBRADOS])); }catch(e){} }
+const EX_ABRIR_URL = new Set();
 
 function janelaEnxame(abrir){
   const on = abrir !== undefined ? abrir : document.documentElement.dataset.janela !== 'enxame';
@@ -1451,7 +1477,8 @@ function exLinhaWorker(w, runId){
   const chave = runId+'/'+w.id, prev = EX.anterior.get(chave);
   const avancou = !EX.primeira && prev && (prev.feitas !== w.feitas || prev.estado !== w.estado);
   const v = w._v;
-  const aberto = avancou ? false : (document.querySelector(`.enxame-w[data-k="${CSS.escape(chave)}"].aberto`) != null);
+  const abertoDom = document.querySelector(`.enxame-w[data-k="${CSS.escape(chave)}"].aberto`) != null;
+  const aberto = avancou ? false : (abertoDom || (EX.primeira && EX_ABRIR_URL.has(w.id)));
   const cls = ['enxame-w', v.classe, w.estado, avancou?'avancou':'', aberto?'aberto':''].filter(Boolean).join(' ');
   const estCls = v.alerta ? 'est-silencio' : 'est-'+w.estado;
   let segs = '';
@@ -1561,6 +1588,30 @@ function exRenderDoca(runs){
       dados desta doca: <b>${esc(EX.rotulo)}</b>${temBytes?' · tamanhos medidos no disco':' · tamanhos indisponíveis nesta fonte'}</p>`;
   doca.scrollTop = rolagem;
 }
+/* O painel redesenha o DOM a cada 2 s. Sem este envelope o browser grampa o
+   scroll no que sobrou e o foco de teclado morre — quem navega na janela do
+   enxame perde o botão a cada tick. Trava a altura, devolve scroll E foco. */
+function exTrocando(alvo, fn){
+  const palco = alvo && alvo.parentElement;
+  const y = palco ? palco.scrollTop : 0;
+  const x = palco ? palco.scrollLeft : 0;
+  const h = alvo ? alvo.offsetHeight : 0;
+  const raiz = document.activeElement;
+  const marca = raiz && raiz.closest ? raiz.closest('[data-foco]') : null;
+  const chave = marca ? marca.dataset.foco : null;
+  if (h) alvo.style.minHeight = h + 'px';
+  fn();
+  if (palco){
+    if (palco.scrollTop !== y) palco.scrollTop = y;
+    if (palco.scrollLeft !== x) palco.scrollLeft = x;
+  }
+  if (chave){
+    let volta = null;
+    try { volta = document.querySelector('[data-foco="'+CSS.escape(chave)+'"]'); } catch(e){}
+    if (volta && typeof volta.focus === 'function') volta.focus({preventScroll:true});
+  }
+  requestAnimationFrame(()=>{ if (alvo) alvo.style.minHeight = ''; });
+}
 function exDetectar(runs){
   const novo = new Map(); const eventos = [];
   for (const r of runs) for (const w of r.workers){
@@ -1607,15 +1658,15 @@ function exRender(runs){
     }).join('');
     html.push(`<article class="enxame-reator${dobrado?' recolhido':''}${alvoDoca?' selecionado':''}" style="--filete:${run._m.filete}">
       <div class="enxame-reator-topo">
-        <button class="enxame-dobra" type="button" data-dobra="${esc(run.id)}"
+        <button class="enxame-dobra" type="button" data-dobra="${esc(run.id)}" data-foco="dobra:${esc(run.id)}"
                 aria-expanded="${!dobrado}" aria-label="${dobrado?'expandir':'recolher'} ${esc(run.id)}"><b>▾</b></button>
-        <div class="enxame-abre" role="button" tabindex="0" data-abre="${esc(run.id)}"
+        <div class="enxame-abre" role="button" tabindex="0" data-abre="${esc(run.id)}" data-foco="abre:${esc(run.id)}"
              aria-pressed="${alvoDoca}" aria-label="abrir o detalhe de ${esc(run.id)}">
           <h3 translate="no">${esc(run.id)}</h3>
           <p class="enxame-missao">${esc(run.missao||'sem missao.md')}</p>
         </div>
         <div class="enxame-num"><b style="color:${rFal?'var(--erro)':'var(--ok)'}">${rOk}<small style="color:var(--tinta-3);font-size:15px">/${n}</small></b>
-          <span>entregues</span></div>
+          <span>entregues${agora!=null?` · <b style="font-size:9.5px;letter-spacing:.14em" translate="no">${esc(exHhmm(agora))}</b>`:''}</span></div>
       </div>
       <div class="enxame-agg" role="img" aria-label="${rOk} de ${n} entregues, ${rFal} falhas, ${rSil} em silêncio">
         <i class="i-ok" style="width:${rOk/n*100}%"></i>
@@ -1626,10 +1677,11 @@ function exRender(runs){
       <div class="enxame-corpo">${ondas||'<p class="enxame-vazio">nenhum worker neste filtro.</p>'}</div>
     </article>`);
   }
-  const y = EX.reatores.parentElement ? EX.reatores.parentElement.scrollTop : 0;
-  EX.reatores.innerHTML = html.join('') || '<p class="enxame-vazio">nenhum swarm encontrado em ~/.claude/iaswarm-runs.</p>';
-  exRenderDoca(runs);
-  if (EX.reatores.parentElement) EX.reatores.parentElement.scrollTop = y;
+  if (EX.raiz) EX.raiz.classList.toggle('estreia', EX.primeira);
+  exTrocando(EX.reatores, ()=>{
+    EX.reatores.innerHTML = html.join('') || '<p class="enxame-vazio">nenhum swarm encontrado em ~/.claude/iaswarm-runs.</p>';
+    exRenderDoca(runs);
+  });
   EX.placar.innerHTML = [
     ['swarms',runs.length,''],['workers',tot,''],
     ['em curso',vivos,'viv'],['entregues',ok,'ok'],
@@ -1771,15 +1823,24 @@ if (EX.raiz){
   });
 }
 
-if (/[?&]janela=enxame/.test(location.search)) {
-  janelaEnxame(true);
+{
   const q = new URLSearchParams(location.search);
+  const swarm = (q.get('swarm') || '').trim();
   const abrir = q.get('abrir');
   const remoto = q.get('remoto');
-  if (abrir) EX.swarm = abrir;
-  if (remoto && remoto.includes('/')) {
-    const [rid, wid] = remoto.split('/');
-    setTimeout(()=> abreRemoto(rid, wid), 600);
+  if (swarm) EX.swarm = swarm;
+  if (abrir){
+    for (const w of abrir.split(',')){
+      const id = w.trim();
+      if (id) EX_ABRIR_URL.add(id);
+    }
+  }
+  if (swarm || abrir || remoto || /[?&]janela=enxame/.test(location.search)) {
+    janelaEnxame(true);
+    if (remoto && remoto.includes('/')) {
+      const [rid, wid] = remoto.split('/');
+      setTimeout(()=> abreRemoto(rid, wid), 600);
+    }
   }
 }
 

@@ -727,6 +727,14 @@ html[data-janela="enxame"] .enxame{display:block}
     linear-gradient(var(--ouro),var(--ouro)) 100% 100%/1px 13px no-repeat;
   opacity:.35}
 .enxame-reator.selecionado{border-color:var(--ouro-fio)}
+/* estreia: só no primeiro paint. No tick seguinte a classe sai — senão os
+   cards ressuscitam a entrada a cada 2 s (defeito medido no neon v1). */
+#enxame.estreia .enxame-reator{animation:enxame-sobe .5s var(--ease) both}
+@keyframes enxame-sobe{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+#enxame.estreia .enxame-seg.feito,
+.enxame-w.avancou .enxame-seg.feito{
+  animation:enxame-acende .34s var(--ease) both;animation-delay:calc(var(--i) * 26ms)}
+@keyframes enxame-acende{from{opacity:0;transform:scaleY(.3)}to{opacity:1;transform:none}}
 .enxame-reator-topo{display:flex;align-items:flex-start;gap:11px;margin-bottom:12px}
 .enxame-dobra{all:unset;box-sizing:border-box;cursor:pointer;flex:none;
   width:26px;height:26px;margin-top:2px;border-radius:6px;
@@ -1096,7 +1104,9 @@ html[data-enxame-modo="neon"] .enxame-term{background:#03060a}
     animation-duration:.01ms !important;animation-iteration-count:1 !important;
     transition-duration:.01ms !important;scroll-behavior:auto !important}
   .campo-mesh,.campo-aurora{animation:none}
-  .enxame-malha,.enxame-agg .i-viv,.enxame-seg.ativo,.enxame-term::after{animation:none}
+  .enxame-malha,.enxame-agg .i-viv,.enxame-seg.ativo,.enxame-term::after,
+  #enxame.estreia .enxame-reator,#enxame.estreia .enxame-seg.feito,
+  .enxame-w.avancou .enxame-seg.feito{animation:none}
 }
 
 /* ── mapa de retomada ─────────────────────────────────────────────────────
