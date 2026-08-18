@@ -3,9 +3,23 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#F2EADA">
+<meta name="theme-color" content="#F2EADA" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#14100B" media="(prefers-color-scheme: dark)">
 <title>ia chat</title>
 <link rel="icon" href="/favicon.ico" sizes="16x16 32x32">
+
+<!-- PWA: "Adicionar à Tela de Início" no iPhone vira ÍCONE e abre em TELA CHEIA.
+     Sem `apple-mobile-web-app-capable` o iOS abre um atalho comum, com a barra do
+     Safari ocupando a tela e o gesto de voltar por cima do compositor. As três metas
+     `apple-*` não são redundância do manifest: o Safari do iOS ainda não lê `display:
+     standalone` do manifesto para decidir isso.
+     `status-bar-style: black-translucent` deixa o conteúdo ir até o topo — e é por isso
+     que o layout já usa `viewport-fit=cover` e `env(safe-area-inset-*)`. -->
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="ia chat">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="stylesheet" href="estilo.css">
 </head>
 <body>
@@ -24,6 +38,8 @@
     <rect width="100%" height="100%" filter="url(#grao)"/>
   </svg>
 </div>
+<!-- malha quadriculada do IASWARM — a mesma trama do painel neon, em ouro -->
+<div class="enxame-malha" aria-hidden="true"></div>
 
 <a class="pular" href="#sala">Pular para a conversa</a>
 
@@ -41,6 +57,14 @@
     <ul class="presenca" id="presenca" aria-labelledby="rot-presenca"></ul>
 
     <div class="trilho-rodape">
+      <button class="trilho-btn" id="btn-sino" role="switch" aria-checked="false"
+              aria-label="Sino do dono desligado" title="Ligar sino do dono">
+        <span class="trilho-btn-glifo" id="sino-glifo" aria-hidden="true">🔕</span>
+      </button>
+      <button class="trilho-btn" id="btn-enxame" aria-pressed="false"
+              aria-label="Abrir a janela do IASWARM" title="IASWARM">
+        <span class="enxame-letreiro" aria-hidden="true">IASWARM</span>
+      </button>
       <button class="trilho-btn" id="btn-tema" aria-label="Alternar tema claro e escuro" title="Alternar tema (⌘⇧L)">
         <span class="trilho-btn-glifo" aria-hidden="true">◑</span>
       </button>
@@ -71,6 +95,10 @@
     </div>
 
     <div class="cabeca-estado">
+      <button class="trilho-btn" id="btn-gaveta-topo" aria-label="Mostrar ou ocultar o painel lateral"
+              aria-expanded="true" aria-controls="gaveta" title="Painel lateral (⌘J)">
+        <span class="trilho-btn-glifo" aria-hidden="true">▤</span>
+      </button>
       <span class="elo" id="elo" data-estado="ligando">
         <span class="elo-pulso" aria-hidden="true"></span>
         <span class="elo-texto">ligando…</span>
@@ -178,6 +206,68 @@
       <ul class="reservas" id="reservas"></ul>
     </section>
   </aside>
+
+  <!-- JANELA IASWARM · dourado — neon é o outro modo, no próprio palco ------ -->
+  <section class="enxame" id="enxame" hidden aria-label="IASWARM">
+    <div class="enxame-folha">
+      <header class="enxame-topo">
+        <h2 class="enxame-marca" id="enxame-marca">
+          <svg class="enxame-logo" viewBox="0 0 620 168" role="img" aria-label="IASWARM">
+            <defs>
+              <linearGradient id="iaswarm-ouro" x1="0" y1="0" x2="1" y2="0">
+                <stop offset="0" stop-color="#886C2E"/>
+                <stop offset=".45" stop-color="#D4B25F"/>
+                <stop offset="1" stop-color="#E8CE8E"/>
+              </linearGradient>
+              <filter id="iaswarm-halo" x="-40%" y="-60%" width="180%" height="220%">
+                <feGaussianBlur stdDeviation="6"/>
+              </filter>
+              <g id="iaswarm-palavra">
+                <text id="iaswarm-letras" x="310" y="0" text-anchor="middle" font-size="96">IASWARM</text>
+                <rect id="iaswarm-filete" x="42" y="19" width="536" height="3" rx="1.5"/>
+              </g>
+            </defs>
+            <use href="#iaswarm-palavra" y="96" fill="url(#iaswarm-ouro)" filter="url(#iaswarm-halo)" opacity=".55"/>
+            <use class="enxame-logo-nucleo" href="#iaswarm-palavra" y="96"/>
+          </svg>
+          <span class="enxame-sub">sala de <b>reatores</b> · frota</span>
+        </h2>
+        <dl class="enxame-placar" id="enxame-placar"></dl>
+        <div class="enxame-controle">
+          <button type="button" class="enxame-btn" id="ex-todos" aria-pressed="true" data-filtro="todos">todos</button>
+          <button type="button" class="enxame-btn" id="ex-vivos" aria-pressed="false" data-filtro="vivos">em curso</button>
+          <button type="button" class="enxame-btn" id="ex-falha" aria-pressed="false" data-filtro="falhou">falhas</button>
+          <button type="button" class="enxame-btn" id="ex-ok" aria-pressed="false" data-filtro="entregue">entregues</button>
+          <button type="button" class="enxame-btn" id="ex-foco" aria-pressed="false">foco</button>
+          <button type="button" class="enxame-btn" id="ex-dobrar" aria-pressed="false">recolher todos</button>
+          <button type="button" class="enxame-btn" id="ex-modo" aria-pressed="false">modo neon</button>
+          <p class="enxame-fonte" id="enxame-fonte"><span class="enxame-led" aria-hidden="true"></span>fonte <b>—</b></p>
+        </div>
+      </header>
+
+      <div class="enxame-palco" id="enxame-palco">
+        <div class="enxame-reatores" id="enxame-reatores"></div>
+        <aside class="enxame-doca" id="enxame-doca" hidden aria-label="detalhe do swarm"></aside>
+      </div>
+
+      <aside class="enxame-remoto" id="enxame-remoto" hidden aria-label="controle remoto da IA"></aside>
+
+      <section class="enxame-diario" aria-labelledby="enxame-log-h">
+        <h3 class="enxame-det-h" id="enxame-log-h">transições</h3>
+        <div class="enxame-log" id="enxame-log" aria-live="polite" aria-atomic="false"></div>
+      </section>
+
+      <p class="enxame-rodape">
+        <b>Leitura:</b> cor = braço · segmento aceso = etapa com evidência em disco ·
+        barra que respira = sinal recente, no ritmo medido daquele braço ·
+        <b>silêncio</b> = despachado sem escrever há muito ·
+        <b>coral</b> = falha · cinza = pulado.
+        Clique no nome da IA para o controle remoto (dados + terminal).
+        Clique no swarm para o detalhe ao lado. A seta recolhe.
+        Neon é o outro modo desta mesma janela — as funções não mudam.
+      </p>
+    </div>
+  </section>
 </div>
 
 <div class="avisos" id="avisos" role="status" aria-live="polite"></div>

@@ -43,7 +43,21 @@ from http.cookies import SimpleCookie
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-BIN = Path(os.environ.get("IACHAT_BIN", Path.home() / "Projetos" / "ia-chat" / "bin"))
+# Mesma ordem de busca do `ui/servir.py`: o irmão RELATIVO primeiro, porque é o que
+# existe em qualquer clone. O caminho do autor fica por último — funciona na máquina
+# dele e em nenhuma outra, e foi o que derrubou onze testes no primeiro push público.
+def _acha_nucleo() -> Path:
+    daqui = Path(__file__).resolve().parent
+    for c in (Path(os.environ["IACHAT_BIN"]) if os.environ.get("IACHAT_BIN") else None,
+              daqui.parent.parent.parent.parent / "ia-chat" / "bin",
+              Path.home() / "Projetos" / "ia-chat" / "bin",
+              Path.home() / ".claude" / "scripts" / "ia-chat"):
+        if c and (c / "iachat_core.py").is_file():
+            return c
+    return Path.home() / "Projetos" / "ia-chat" / "bin"
+
+
+BIN = _acha_nucleo()
 sys.path.insert(0, str(BIN))
 import iachat_core as core  # noqa: E402
 

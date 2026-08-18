@@ -20,6 +20,7 @@ import argparse
 import json
 import mimetypes
 import os
+import re
 import base64
 import secrets
 import select
@@ -33,7 +34,34 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-sys.path.insert(0, str(Path.home() / "Projetos" / "ia-chat" / "bin"))
+def _acha_nucleo() -> Path:
+    """Onde mora o `iachat_core`, em ordem de confiança.
+
+    Era um caminho ÚNICO e fixo: `~/Projetos/ia-chat/bin`. Funciona na máquina do autor
+    e em nenhuma outra — o repositório irmão pode estar em qualquer lugar, e no runner
+    do CI ele fica no workspace. O `lancador.py` já contornava por `PYTHONPATH`, o que
+    salvava o app em produção e deixava o servidor sozinho em todo resto.
+
+    O preço foi medido no primeiro push do repositório público: ONZE testes vermelhos,
+    todos com o mesmo sintoma — servidor sobe, responde 0 mensagem. Quando onze testes
+    caem pela mesma causa, o defeito é do produto, não dos testes.
+
+    O irmão RELATIVO é o que faz isto funcionar em qualquer clone: quem baixa os dois
+    repositórios lado a lado — que é o que os dois READMEs mandam fazer — tem o núcleo
+    em `../ia-chat/bin` e não precisa saber disso.
+    """
+    daqui = Path(__file__).resolve().parent           # …/ia-chat-app/ui
+    for c in (Path(os.environ["IACHAT_CORE"]) if os.environ.get("IACHAT_CORE") else None,
+              daqui.parent.parent / "ia-chat" / "bin",          # irmão do repo
+              daqui.parent.parent.parent / "ia-chat" / "bin",   # irmão do bundle
+              Path.home() / "Projetos" / "ia-chat" / "bin",     # o caminho do autor
+              Path.home() / ".claude" / "scripts" / "ia-chat"): # o que o install.sh deixa
+        if c and (c / "iachat_core.py").is_file():
+            return c
+    return Path.home() / "Projetos" / "ia-chat" / "bin"
+
+
+sys.path.insert(0, str(_acha_nucleo()))
 import iachat_core as core  # noqa: E402
 
 UI = Path(__file__).resolve().parent
@@ -65,11 +93,31 @@ CFG = {"escrever": False, "papel": "bauer", "token": ""}
 # `shell=True`, não há string concatenada, e o cliente não escolhe o comando nem
 # um argumento sequer — nem sub-rota, nem `--run`, nem caminho. Ele só escolhe SE
 # chama. Texto de usuário nunca entra na linha de comando.
-IACHAT_COMANDO = Path.home() / "Projetos" / "ia-chat" / "bin" / "iachat-comando"
+# Mesmo raciocínio do núcleo: o comando vive ao lado dele, onde quer que ele esteja.
+IACHAT_COMANDO = _acha_nucleo() / "iachat-comando"
 COMANDOS_HTTP: dict[str, tuple[str, ...]] = {"quem": ("quem", "--json")}
 # Teto de tempo: o `quem` varre a tabela de processos. Se travar, a thread do
 # servidor fica presa e a vaga não volta — o mesmo problema do SSE sem teto.
 TETO_COMANDO_S = 8
+
+# O sino do DONO usa a infraestrutura que o ia-chat já possui. O estado não
+# mora aqui: continua sendo `config.json:notificar_operador`. Ao ligar pelo app,
+# este instalador apenas garante a perna macOS (LaunchAgent) para ESSA sala.
+IACHAT_SCRIPTS = Path(os.environ.get(
+    "IACHAT_SCRIPTS", str(Path.home() / ".claude" / "scripts" / "ia-chat")
+)).expanduser()
+INSTALADOR_SINO = IACHAT_SCRIPTS / "ia-bell-install-daemon.sh"
+TETO_INSTALAR_SINO_S = 15
+
+# — o visualizador IASWARM lê o disco do enxame, nunca escreve ——————————————
+# A raiz é cravada (ou vem de IASWARM_RAIZ no ambiente, para o teste). O cliente
+# não escolhe pasta: um `?run=../../` morre no RE_ID antes de tocar o disco.
+# Cauda de log é teto de 8 KB — o remoto mostra o fim, não o arquivo inteiro.
+IASWARM_RAIZ = Path(os.environ.get(
+    "IASWARM_RAIZ", str(Path.home() / ".claude" / "iaswarm-runs")
+)).expanduser()
+RE_IASWARM_ID = re.compile(r"^[A-Za-z0-9._-]{1,80}$")
+TETO_LOG_IASWARM = 8192
 
 # O favicon viaja DENTRO deste arquivo, em base64, e não como um arquivo ao lado.
 # Motivo medido, não estético: `montar.sh` copia para o bundle uma lista fixa de
@@ -168,6 +216,7 @@ def sala() -> dict:
     return {
         "na_sala": [core.normaliza_ia(x) for x in cfg.get("na_sala", [])],
         "brain": core.normaliza_ia(cfg.get("brain", "")),
+        "notificar_operador": cfg.get("notificar_operador", False) is True,
         "escrever": CFG["escrever"], "papel": CFG["papel"],
     }
 
@@ -286,6 +335,13 @@ class Sala(BaseHTTPRequestHandler):
             return
         if u.path == "/api/estado":
             return self._json({"ultima": ultima()})
+        if u.path == "/api/sino":
+            cfg = core.config()
+            return self._json({
+                "notificar_operador":
+                    cfg.get("notificar_operador", False) is True,
+                "escrever": CFG["escrever"],
+            })
         if u.path == "/api/sala":
             desde = int((q.get("desde") or ["0"])[0])
             return self._json({"ultima": ultima(), "desde": desde,
@@ -298,9 +354,202 @@ class Sala(BaseHTTPRequestHandler):
         # vez da única porta. `q` nem é lido aqui.
         if u.path == "/api/quem":
             return self._comando("quem")
+        if u.path == "/api/iaswarm":
+            return self._iaswarm(q)
+        if u.path == "/api/iaswarm/remoto":
+            return self._iaswarm_remoto(q)
         if u.path.count("/") == 1 and u.path[1:]:
             return self._estatico(u.path[1:])
         self._json({"erro": "rota inexistente"}, 404)
+
+    def _iaswarm_id(self, bruto: str) -> str | None:
+        nome = (bruto or "").strip()
+        if not RE_IASWARM_ID.match(nome):
+            return None
+        return nome
+
+    def _iaswarm_pasta(self, run_id: str) -> Path | None:
+        raiz = IASWARM_RAIZ.resolve()
+        alvo = (raiz / run_id).resolve()
+        try:
+            alvo.relative_to(raiz)
+        except ValueError:
+            return None
+        if not alvo.is_dir():
+            return None
+        return alvo
+
+    def _iaswarm_linhas(self, path: Path) -> list[dict]:
+        saida = []
+        try:
+            texto = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return saida
+        for ln in texto.splitlines():
+            s = ln.strip()
+            if not s:
+                continue
+            try:
+                obj = json.loads(s)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(obj, dict):
+                saida.append(obj)
+        return saida
+
+    def _iaswarm_run(self, pasta: Path) -> dict | None:
+        if pasta.name.startswith("_") or pasta.name.startswith("."):
+            return None
+        progress: dict[str, list] = {}
+        prog = pasta / "progress"
+        if prog.is_dir():
+            for f in sorted(prog.iterdir()):
+                if f.suffix == ".jsonl" and RE_IASWARM_ID.match(f.stem):
+                    progress[f.stem] = self._iaswarm_linhas(f)
+        tsv: dict[str, dict] = {}
+        for nome in ("workers.tsv", "state.json"):
+            arq = pasta / nome
+            if nome == "workers.tsv" and arq.is_file():
+                try:
+                    for ln in arq.read_text(encoding="utf-8", errors="replace").splitlines():
+                        c = ln.strip().split("\t")
+                        if len(c) >= 3 and c[0] and not c[0].startswith("#") and RE_IASWARM_ID.match(c[0]):
+                            tsv[c[0]] = {"braco": c[1], "etapas": int(c[2]) if c[2].isdigit() else 5}
+                except OSError:
+                    pass
+            if nome == "state.json" and arq.is_file():
+                try:
+                    st = json.loads(arq.read_text(encoding="utf-8"))
+                    for w in st.get("workers") or []:
+                        wid = str(w.get("worker") or "")
+                        if RE_IASWARM_ID.match(wid) and wid not in tsv:
+                            tsv[wid] = {
+                                "braco": w.get("variante") or w.get("braco") or "",
+                                "etapas": int(w.get("etapas") or 5),
+                            }
+                except (OSError, json.JSONDecodeError, TypeError, ValueError):
+                    pass
+        resultados: list[str] = []
+        tamanhos: dict[str, int] = {}
+        res = pasta / "resultados"
+        if res.is_dir():
+            for f in res.iterdir():
+                if f.suffix == ".md" and RE_IASWARM_ID.match(f.stem) and f.is_file():
+                    try:
+                        tam = f.stat().st_size
+                    except OSError:
+                        continue
+                    if tam > 0:
+                        resultados.append(f.stem)
+                        tamanhos[f.stem] = tam
+        logs: dict[str, int] = {}
+        lg = pasta / "logs"
+        if lg.is_dir():
+            for f in lg.iterdir():
+                if f.suffix == ".log" and RE_IASWARM_ID.match(f.stem) and f.is_file():
+                    try:
+                        logs[f.stem] = f.stat().st_size
+                    except OSError:
+                        continue
+        missao = ""
+        md = pasta / "missao.md"
+        if md.is_file():
+            try:
+                missao = md.read_text(encoding="utf-8", errors="replace").split("\n", 1)[0]
+                missao = re.sub(r"^#+\s*", "", missao).strip()
+            except OSError:
+                missao = ""
+        if not progress and not tsv:
+            return None
+        return {
+            "id": pasta.name,
+            "missao": missao,
+            "caminho": str(pasta),
+            "tsv": tsv,
+            "progress": progress,
+            "resultados": resultados,
+            "tamanhos": tamanhos,
+            "logs": logs,
+        }
+
+    def _iaswarm(self, q: dict):
+        """Lista os runs do enxame. Leitura pura; o cliente não escolhe pasta."""
+        raiz = IASWARM_RAIZ
+        if not raiz.is_dir():
+            return self._json({"fonte": "ausente", "raiz": str(raiz), "runs": []})
+        bruto_run = (q.get("run") or [""])[0]
+        pedido = self._iaswarm_id(bruto_run) if bruto_run else None
+        if bruto_run and not pedido:
+            return self._json({"erro": "run inválido"}, 400)
+        runs = []
+        try:
+            alvos = []
+            if pedido:
+                pasta = self._iaswarm_pasta(pedido)
+                if pasta is None:
+                    return self._json({"erro": "run inexistente"}, 404)
+                alvos = [pasta]
+            else:
+                for p in sorted(raiz.iterdir(), key=lambda x: x.name):
+                    if p.is_dir() and not p.name.startswith(("_", ".")):
+                        alvos.append(p)
+            for pasta in alvos:
+                cru = self._iaswarm_run(pasta)
+                if cru:
+                    runs.append(cru)
+        except OSError as e:
+            return self._json({"erro": f"não li o enxame: {e}"}, 500)
+        return self._json({
+            "fonte": "disco",
+            "raiz": str(raiz.resolve()),
+            "vivo": True,
+            "runs": runs,
+        })
+
+    def _iaswarm_remoto(self, q: dict):
+        """Dados + cauda do log de UM worker. Sem path do cliente."""
+        run_id = self._iaswarm_id((q.get("run") or [""])[0])
+        worker = self._iaswarm_id((q.get("worker") or [""])[0])
+        if not run_id or not worker:
+            return self._json({"erro": "run e worker obrigatórios"}, 400)
+        pasta = self._iaswarm_pasta(run_id)
+        if pasta is None:
+            return self._json({"erro": "run inexistente"}, 404)
+        cru = self._iaswarm_run(pasta)
+        if cru is None:
+            return self._json({"erro": "run vazio"}, 404)
+        evs = (cru.get("progress") or {}).get(worker) or []
+        tsv = (cru.get("tsv") or {}).get(worker) or {}
+        log_path = pasta / "logs" / f"{worker}.log"
+        cauda = ""
+        if log_path.is_file():
+            try:
+                data = log_path.read_bytes()
+                if len(data) > TETO_LOG_IASWARM:
+                    data = data[-TETO_LOG_IASWARM:]
+                cauda = data.decode("utf-8", "replace")
+            except OSError:
+                cauda = ""
+        res_path = pasta / "resultados" / f"{worker}.md"
+        resultado = ""
+        if res_path.is_file():
+            try:
+                resultado = res_path.read_text(encoding="utf-8", errors="replace")[:4000]
+            except OSError:
+                resultado = ""
+        return self._json({
+            "run": run_id,
+            "worker": worker,
+            "braco": tsv.get("braco", ""),
+            "etapas": tsv.get("etapas", 5),
+            "eventos": evs,
+            "log": cauda,
+            "log_bytes": (cru.get("logs") or {}).get(worker),
+            "resultado": resultado,
+            "resultado_bytes": (cru.get("tamanhos") or {}).get(worker),
+            "caminho_log": str(log_path) if log_path.is_file() else "",
+            "caminho_resultado": str(res_path) if res_path.is_file() else "",
+        })
 
     def _comando(self, nome: str):
         """Roda UM comando da allowlist e devolve o JSON dele. Nada do cliente entra.
@@ -335,6 +584,36 @@ class Sala(BaseHTTPRequestHandler):
             return self._json(json.loads(r.stdout))
         except json.JSONDecodeError:
             return self._json({"erro": "o comando não devolveu JSON"}, 500)
+
+    def _garante_sino_operador(self) -> tuple[bool, str]:
+        """Instala/recarrega o LaunchAgent só depois do clique em LIGAR.
+
+        O argv é constante, sem shell e sem texto do cliente. A configuração
+        ainda está `false` enquanto o instalador roda; portanto, instalar nunca
+        dispara uma notificação por conta própria.
+        """
+        if not INSTALADOR_SINO.is_file():
+            return False, f"instalador do sino ausente: {INSTALADOR_SINO}"
+        try:
+            r = subprocess.run(
+                ["/bin/bash", str(INSTALADOR_SINO), "--operador", "15"],
+                capture_output=True,
+                text=True,
+                timeout=TETO_INSTALAR_SINO_S,
+                env={
+                    **os.environ,
+                    "IACHAT_HOME": str(core.home()),
+                    "IACHAT_SCRIPTS": str(IACHAT_SCRIPTS),
+                },
+            )
+        except subprocess.TimeoutExpired:
+            return False, f"instalador passou de {TETO_INSTALAR_SINO_S}s"
+        except OSError as exc:
+            return False, f"não consegui iniciar o instalador: {exc}"
+        if r.returncode != 0:
+            detalhe = (r.stderr or r.stdout or "instalador falhou").strip()[:400]
+            return False, detalhe
+        return True, (r.stdout or "sino do Mac pronto").strip()[:400]
 
     def _stream(self, desde: int):
         with _SSE_TRAVA:
@@ -383,7 +662,7 @@ class Sala(BaseHTTPRequestHandler):
         u = urlparse(self.path)
         if not self._ok_token(parse_qs(u.query)):
             return self._nega()
-        if u.path != "/api/post":
+        if u.path not in ("/api/post", "/api/sino"):
             return self._json({"erro": "rota inexistente"}, 404)
         if not CFG["escrever"]:
             return self._json({"erro": "servidor em modo leitura"}, 403)
@@ -401,6 +680,17 @@ class Sala(BaseHTTPRequestHandler):
         # `i1-celular`, medido com `Origin: http://10.211.55.2:18931` → 403.
         permitidas = {f"http://127.0.0.1:{porta}", f"http://localhost:{porta}"}
         permitidas |= {f"http://{ip}:{porta}" for ip in _ips_lan()}
+        # Origem EXTRA, declarada pelo dono em `IACHAT_ORIGEM` (uma por linha ou
+        # separada por vírgula). Existe para um caso real: quando a sala é publicada por
+        # um túnel (Cloudflare, ngrok), o navegador manda `Origin: https://algo.example`,
+        # que não é loopback nem LAN — e o envio tomava 403 depois de a página carregar,
+        # o pior tipo de defeito, o que parece funcionar.
+        #
+        # É OPT-IN e literal de propósito: sem curinga, sem "aceita qualquer https". Quem
+        # abre a porta é quem digita o endereço. O anti-CSRF continua fechado para todo o
+        # resto — alargar por necessidade não é o mesmo que afrouxar.
+        extra = os.environ.get("IACHAT_ORIGEM", "")
+        permitidas |= {o.strip() for o in extra.replace("\n", ",").split(",") if o.strip()}
         if origem and origem not in permitidas:
             return self._json({"erro": f"origem recusada: {origem}"}, 403)
         # Corpo sem teto esgota a memória do processo: 256 KB é folgado para uma
@@ -410,6 +700,28 @@ class Sala(BaseHTTPRequestHandler):
             return self._json({"erro": "corpo grande demais"}, 413)
         try:
             dados = json.loads(self.rfile.read(n) or b"{}")
+            if not isinstance(dados, dict):
+                return self._json({"erro": "corpo JSON precisa ser objeto"}, 400)
+            if u.path == "/api/sino":
+                ligado = dados.get("ligado")
+                if type(ligado) is not bool:
+                    return self._json(
+                        {"erro": "`ligado` precisa ser booleano"}, 400
+                    )
+                # Liga: prova primeiro que a perna macOS existe; só depois grava
+                # `true`. Desliga: grava `false` imediatamente e o daemon fica mudo
+                # no próximo ciclo, sem segundo arquivo de estado.
+                if ligado:
+                    ok, detalhe = self._garante_sino_operador()
+                    if not ok:
+                        return self._json(
+                            {"erro": f"sino do Mac não ficou pronto: {detalhe}"}, 503
+                        )
+                cfg = core.configurar_notificacao_operador(ligado)
+                return self._json({
+                    "notificar_operador":
+                        cfg.get("notificar_operador", False) is True,
+                })
             # A identidade é do SERVIDOR, nunca do cliente. Auditoria de 18/08:
             # aceitar `de` do payload permitia a qualquer um com o token postar
             # assinando como @claude, @codex ou @bauer — foi assim que apareceu na
@@ -420,7 +732,7 @@ class Sala(BaseHTTPRequestHandler):
                 texto=(dados.get("texto") or "").strip(),
                 para=dados.get("para"),
             ))
-        except ValueError as e:
+        except (json.JSONDecodeError, ValueError) as e:
             return self._json({"erro": str(e)}, 400)
         except Exception as e:
             return self._json({"erro": f"{type(e).__name__}: {e}"}, 500)

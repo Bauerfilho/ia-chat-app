@@ -22,8 +22,17 @@ from pathlib import Path
 RAIZ = Path(__file__).resolve().parent.parent
 SALA_JS = RAIZ / "ui" / "sala.js"
 INDEX = RAIZ / "ui" / "index.html"
-# fonte canônica da regra; fora deste repo, então pode não estar presente
-REPORT = Path.home() / "Projetos" / "ia-chat" / "bin" / "iachat-report"
+# Fonte canônica da regra, e ela vive no repositório IRMÃO — pode não estar presente.
+# O caminho do autor (`~/Projetos/ia-chat`) não é o de ninguém mais: no runner do CI o
+# irmão fica ao lado, no workspace. Procurar o relativo primeiro é o que faz este gate
+# comparar de verdade em vez de se declarar indisponível na máquina de quem clonou.
+REPORT = next(
+    (c for c in (RAIZ.parent / "ia-chat" / "bin" / "iachat-report",
+                 Path.home() / "Projetos" / "ia-chat" / "bin" / "iachat-report",
+                 Path.home() / ".claude" / "scripts" / "ia-chat" / "iachat-report")
+     if c.is_file()),
+    RAIZ.parent / "ia-chat" / "bin" / "iachat-report",
+)
 
 _ok = 0
 _falhou = 0

@@ -261,8 +261,20 @@ def ciclo(tmp: Path, porta: int) -> None:
             a for a in re.findall(r'(?:href|src)="([^"]+)"', html)
             if not a.startswith(("#", "data:", "http"))
         })
-        checa("2 · o HTML referencia os assets esperados",
-              set(ativos) == {"/favicon.ico", "estilo.css", "sala.js"}, str(ativos))
+        # SUBCONJUNTO, não igualdade. O comentário acima já prometia que a interface
+        # podia "ganhar um arquivo novo" e o teste pegaria sozinho — mas a asserção
+        # exigia o conjunto EXATO, e reprovava justamente quem acrescentasse algo. Foi o
+        # que aconteceu ao entrar o PWA (`manifest.webmanifest`, `apple-touch-icon.png`):
+        # vermelho sem defeito nenhum, e o laço logo abaixo já provava que os dois
+        # respondiam 200.
+        #
+        # Os três continuam OBRIGATÓRIOS — sem eles não há interface. O que deixou de
+        # ser obrigatório é não haver mais nada. Um gate que reprova crescimento
+        # legítimo ensina a mexer no gate em vez de olhar o produto.
+        essenciais = {"/favicon.ico", "estilo.css", "sala.js"}
+        checa("2 · o HTML referencia os assets essenciais",
+              essenciais <= set(ativos),
+              f"faltam {sorted(essenciais - set(ativos))} · presentes: {ativos}")
         for ativo in ativos:
             rota = ativo if ativo.startswith("/") else "/" + ativo
             st, dados = pede(porta, rota, token)

@@ -79,7 +79,13 @@ if bloco:
 
     # ── 3. o comando roda de verdade ────────────────────────────────────────
     home = Path(tempfile.mkdtemp(prefix="demo-")) / "sala"
-    env = dict(os.environ, IACHAT_HOME=str(home))
+    # O `servir.py` procura o núcleo em `~/Projetos/ia-chat/bin` — caminho FIXO, baseado
+    # em HOME. Numa máquina onde o repositório não mora ali (o runner do CI põe o irmão
+    # no workspace), o import só encontra pelo PYTHONPATH. É o que o `lancador.py` faz em
+    # produção; o teste não fazia, e o servidor subia sem núcleo devolvendo 0 mensagens.
+    NUCLEO = RAIZ.parent / "ia-chat" / "bin"
+    env = dict(os.environ, IACHAT_HOME=str(home),
+               PYTHONPATH=str(NUCLEO) + os.pathsep + os.environ.get("PYTHONPATH", ""))
     subprocess.run([sys.executable, str(CLI), "status"], env=env,
                    capture_output=True, stdin=subprocess.DEVNULL, timeout=60)
 
