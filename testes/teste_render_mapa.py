@@ -92,7 +92,7 @@ def main() -> int:
         return 1 if _falhou else 0
 
     print("— o endereço abre —")
-    (link, ponto, wiki, wiki_rot, regua, perigo, dado, texto) = render([
+    (link, ponto, wiki, wiki_rot, regua, perigo, dado, texto, cam) = render([
         "painel — http://127.0.0.1:49857/",
         "veja https://exemplo.com/a, depois volte",
         "ver [[reference-iaswarm]] no vault",
@@ -101,6 +101,7 @@ def main() -> int:
         "clique em javascript:alert(1) agora",
         "veja data:text/html;base64,PHNjcmlwdD4= aqui",
         "sem endereço nenhum aqui",
+        "ver /Users/bauer/.claude/iaswarm-runs/fase10/state.json agora",
     ])
     checa("endereço http vira link", '<a href="http://127.0.0.1:49857/"' in link, link)
     checa("o link abre em aba nova, sem alcançar esta",
@@ -121,11 +122,23 @@ def main() -> int:
           'class="wikilink">o enxame<' in wiki_rot, wiki_rot)
     checa("`---` vira régua, não três hifens", "<hr" in regua and "---" not in regua, regua)
 
+    print("— caminho longo quebra na barra, não no meio da palavra —")
+    # Sem isto a tela mostrava `/.clau` numa linha e `de/` na outra. No celular,
+    # onde ele lê o mapa, isso é a regra.
+    checa("cada barra do caminho ganha ponto de quebra",
+          cam.count("/<wbr>") >= 4, cam)
+    checa("o caminho copiado continua inteiro",
+          "/Users/bauer/.claude/iaswarm-runs/fase10/state.json" in re.sub(r"<[^>]+>", "", cam),
+          "o <wbr> não pode entrar no texto copiado")
+
     print("— o estilo existe nos dois temas —")
     checa("o link tem cor própria", ".msg-corpo a" in CSS)
     checa("o wikilink se distingue de link de verdade",
           '.wikilink::before{content:"[["' in CSS,
           "sem os colchetes, ele parece clicável e não é")
+    checa("o caminho não quebra em qualquer caractere",
+          "word-break:normal" in CSS.split(".caminho{")[1][:400] if ".caminho{" in CSS else False,
+          "com break-all o <wbr> não adianta: ele quebra antes, no meio da palavra")
 
     print(f"\n{_ok} ✔  {_falhou} ✗")
     return 1 if _falhou else 0

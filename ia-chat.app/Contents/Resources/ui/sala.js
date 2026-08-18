@@ -151,9 +151,13 @@ function corpoHTML(txt){
   // comando ANTES de caminho: senão `/concluir` é confundido com um path
   h = h.replace(/(^|\s)(\/(?:goal|plan|concluir|parar|quem|decidi|refaz))\b/g,
     '$1<span class="cmd" translate="no">$2</span>');
-  // caminho de verdade: precisa de uma segunda barra ou de extensão
+  /* caminho de verdade: precisa de uma segunda barra ou de extensão.
+     O `<wbr>` depois de cada `/` dá ao navegador onde quebrar. Sem ele, um caminho
+     longo quebrava no meio da palavra — na tela saía `/.clau` numa linha e `de/` na
+     outra, e no celular isso é a regra, não a exceção. `<wbr>` não entra na cópia:
+     quem copia da tela leva o caminho inteiro. */
   h = h.replace(/(^|[\s(])(~?\/[\w.~-]+(?:\/[\w.~-]+)+\/?|~?\/[\w~-]+\.\w{2,4})/g,
-    '$1<span class="caminho">$2</span>');
+    (_, antes, p) => `${antes}<span class="caminho">${p.replace(/\//g, '/<wbr>')}</span>`);
   /* Endereço vira link. Ele lê o mapa de retomada no celular, e a linha do painel
      (`painel — ` seguido do endereço local) era texto morto: dá para ver e não dá
      para ir. Só `http`/`https` — nada de `javascript:` ou `data:`, que é onde mora
