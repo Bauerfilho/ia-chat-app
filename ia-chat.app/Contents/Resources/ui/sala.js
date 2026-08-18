@@ -264,8 +264,9 @@ function desenhaFio(){
 
 /* ⚠️ MEDIDO 18/08 na sala real: a regra antiga desta aba procurava o COMANDO
    `/decidi` (ou `/concluir`) no texto — e ele aparece **0 vezes** em 29
-   mensagens, então a aba estava condenada a nascer vazia. `/decidi` nem existe
-   ainda: está como `pronto:false` na lista COMANDOS aqui em cima.
+   mensagens, então a aba estava condenada a nascer vazia. `/decidi` não é digitado
+   na sala: está como `onde:'terminal'` na lista COMANDOS aqui em cima, porque o
+   registro durável dele é um arquivo que só o CLI escreve.
    O que a sala usa de verdade é o MARCADOR no começo da linha, e é isso que o
    `bin/iachat-report` (RE_MARCA) extrai — 8 marcações em 2 mensagens (#26, #29).
    Esta regra é a mesma dele, byte a byte no conjunto de marcadores: uma
@@ -423,6 +424,7 @@ function abrePaleta(prefixo){
 }
 function fechaPaleta(){
   E.paleta.hidden = true;
+  paletaModo = 'lista';
   E.texto.removeAttribute('role');
   E.texto.removeAttribute('aria-expanded');
   E.texto.removeAttribute('aria-controls');
@@ -437,6 +439,77 @@ function marcaPaleta(){
   E.texto.setAttribute('aria-activedescendant', sel.id);
   sel.scrollIntoView({block:'nearest'});
 }
+/* ── a paleta como SUPERFÍCIE DE RESPOSTA ─────────────────────────────────
+   Tudo o que este recurso desenha vive dentro de `#paleta`, que é meu. Três
+   agentes trabalham nesta pasta e `estilo.css` não é minha fronteira — por isso
+   nenhuma classe nova: só `.paleta-item`, `.paleta-cmd`, `.paleta-desc` e
+   `.paleta-quem`, que já existem. */
+function painelPaleta(html, rotulo){
+  fechaPaleta();                       // limpa o combobox: aqui não há opção
+  paletaModo = 'painel';
+  E.paleta.setAttribute('role', 'group');
+  E.paleta.setAttribute('aria-label', rotulo);
+  E.paleta.innerHTML = html;
+  E.paleta.hidden = false;
+  const b = $('[data-copiar]', E.paleta);
+  if (b) b.addEventListener('click', ()=> copia(b.dataset.copiar));
+}
+
+async function copia(txt){
+  try{
+    await navigator.clipboard.writeText(txt);
+    avisa('Linha copiada. <b>Cole no terminal.</b>');
+  }catch{
+    // Sem permissão de área de transferência a linha continua na tela, e
+    // selecionável — dizer "copiei" sem ter copiado seria o mesmo defeito
+    // que este recurso existe para matar.
+    avisa('Não consegui copiar — a linha está aí para selecionar.', 'erro');
+  }
+}
+
+/* O que NÃO atravessa não fica mudo: mostra a linha e o porquê. */
+function mostraLinha(c){
+  painelPaleta(`
+    <div class="paleta-item">
+      <span class="paleta-cmd" translate="no">${c.cmd}</span>
+      <span class="paleta-desc"><b>Só no terminal.</b> ${esc(c.porque || '')}</span>
+      <span class="paleta-quem">não atravessa</span>
+    </div>
+    <div class="paleta-item">
+      <code class="paleta-desc" translate="no">${esc(c.linha)}</code>
+      <button type="button" class="paleta-cmd" data-copiar="${esc(c.linha)}">copiar</button>
+    </div>`, `${c.cmd}: a linha para o terminal`);
+}
+
+/* `/quem` é o único que atravessa, e atravessa porque só LÊ. */
+async function rodaQuem(){
+  painelPaleta('<div class="paleta-item"><span class="paleta-desc">consultando…</span></div>',
+               '/quem: consultando');
+  let d;
+  try{
+    const r = await fetch(url('/api/quem'));
+    d = await r.json();
+    if (!r.ok || d.erro) throw new Error(d.erro || ('HTTP ' + r.status));
+  }catch(e){
+    // Degrada como o cabeçalho deste arquivo promete: servidor sem a rota (o
+    // do bundle é reserva e não tem) vira a linha do terminal, não um erro sem saída.
+    return mostraLinha({cmd:'/quem', linha:'iachat-comando quem',
+      porque:'este servidor não respondeu (' + e.message + '), mas o CLI responde.'});
+  }
+  const linhas = (d.quem || []).map(x=>`
+    <div class="paleta-item">
+      <span class="paleta-cmd" translate="no">${esc(x.ia)}</span>
+      <span class="paleta-desc">${esc(x.estado)} · ${esc(x.fazendo)}</span>
+      <span class="paleta-quem">${esc(x.ha || '')}</span>
+    </div>`).join('');
+  painelPaleta(`
+    <div class="paleta-item">
+      <span class="paleta-cmd" translate="no">${esc(d.missao || '—')}</span>
+      <span class="paleta-desc">${esc(d.estado || 'nenhuma missão aberta')}</span>
+      <span class="paleta-quem">agora</span>
+    </div>${linhas}`, '/quem: quem está vivo');
+}
+
 function escolhePaleta(cmd){
   E.texto.value = cmd + ' ';
   fechaPaleta();
@@ -567,6 +640,12 @@ function abreFluxo(){
 async function envia(){
   const txt = E.texto.value.trim();
   if (!txt) return;
+  // Comando que não é conversa não vira mensagem. Antes, `/parar` no campo era
+  // postado no chat como texto — a sala recebia a palavra e nada parava.
+  const c = cmdDe(txt);
+  if (c && c.onde !== 'sala'){
+    return c.onde === 'aqui' ? rodaQuem() : mostraLinha(c);
+  }
   const alvos = alvosDoTexto(txt);
   E.enviar.disabled = true;
   const rotulo = E.enviarRot.textContent;
@@ -598,7 +677,13 @@ E.texto.addEventListener('input', ()=>{
 });
 
 E.texto.addEventListener('keydown', ev=>{
-  if (!E.paleta.hidden){
+  // No modo `painel` a paleta está VISÍVEL mas não é uma lista de opções: navegar
+  // ali marcaria `aria-selected` numa linha de resposta e o Enter escolheria um
+  // `data-cmd` que não existe. Escape continua fechando, porque fechar é sempre
+  // uma saída legítima.
+  if (!E.paleta.hidden && paletaModo === 'painel'){
+    if (ev.key === 'Escape'){ ev.preventDefault(); fechaPaleta(); return; }
+  } else if (!E.paleta.hidden){
     if (ev.key === 'ArrowDown'){ ev.preventDefault(); return navegaPaleta(1); }
     if (ev.key === 'ArrowUp'){ ev.preventDefault(); return navegaPaleta(-1); }
     if (ev.key === 'Escape'){ ev.preventDefault(); fechaPaleta(); return; }

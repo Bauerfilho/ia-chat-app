@@ -240,14 +240,63 @@ como **a implementar**. Nada finge estar pronto.
 
 ---
 
-## 10. Acessibilidade e teclado
+## 10. Acessibilidade e teclado — medida em runtime, não no markup
 
-`⌘K` busca · `⌘J` gaveta · `⌘⇧L` tema · `⌘↵` envia · `Esc` limpa a busca ou fecha a paleta ·
-`↑↓` navegam a paleta · `←→` navegam as abas.
+`⌘K` busca · `⌘J` gaveta · `⌘⇧L` tema · `⌘↵` envia · `Esc` limpa a busca ou fecha a paleta.
+**Na conversa:** `↑↓` escolhem a mensagem, `PageUp`/`PageDown` andam de cinco em cinco,
+`Home`/`End` vão ao começo e ao fim, `Enter` abre o fio dela, `Tab` entra nas ações dela.
+**Nas abas:** `←→` e `Home`/`End`. **Na paleta:** `↑↓`, `Enter`, `Esc`.
 
-Skip link, `role="log"` com `aria-live` na sala, `aria-live` na faixa de destino e nos avisos,
-`aria-label` em todo botão de ícone, `aria-hidden` em todo glifo decorativo, foco visível em
-dourado, hierarquia de headings, `tabpanel`/`tab` corretos, estados vazios com texto útil.
+Markup bom não prova comportamento — então o comportamento foi medido no navegador, com Tab
+real e `document.activeElement` a cada passo.
+
+### O número que mandou refazer a navegação
+
+Com 31 mensagens na sala, a volta completa de Tab tinha **107 paradas, e 97 delas vinham antes
+do campo de escrita** — 93 eram os três botões de cada mensagem. A sala rotaciona em 200 KB:
+com 200 mensagens seriam 600 paradas até conseguir escrever.
+
+A conversa virou **uma parada só**. O `#fio` é o ponto de entrada; as setas escolhem a mensagem
+(apontada por `aria-activedescendant`, que é como o leitor de tela acompanha sem o foco sair do
+log) e **só as ações da mensagem escolhida entram no Tab**. Nada ficou inalcançável: as ações
+continuam a um `Tab` de distância — deixaram de ser pedágio.
+
+| | antes | depois |
+|---|---|---|
+| volta completa de Tab | 107 paradas | **15** |
+| até o campo de escrita | 97 | **8** |
+| conjunto de abas | 4 paradas | **1** (roving tabindex) |
+| ações de mensagem no Tab | 93 | **3** (só as da escolhida) |
+
+### O que estava certo e ficou como estava
+
+- **Movimento reduzido** — verificado com `emulateMedia({reducedMotion:'reduce'})`: `campo-mesh`
+  e `campo-aurora` vão a `animation-name: none`, e as animações em execução caem de 6 para 3
+  (as três restantes com duração 0,01 ms, que é parada).
+- **Foco visível** — as 22 paradas medidas mostram `outline: solid 2px` dourado. O campo de
+  texto se anuncia pelo pai (`.caixa:focus-within` com borda dourada opaca), que é o padrão
+  para controle composto.
+- **Mensagem nova é anunciada** — posta pelo CLI e recebida por SSE, o log registrou **um único
+  nó adicionado**, sem recriar a lista. É o que faz o leitor ler só a mensagem que chegou.
+
+### O que estava errado
+
+- **A busca não tinha indicação de foco perceptível.** O anel existia no código a 10% de
+  opacidade — ou seja, existia no CSS e não no olho. Agora é ouro sólido a 55% com borda opaca
+  (WCAG 2.4.11 pede contraste próprio no indicador).
+- **Filtrar a busca recriava os 31 nós dentro da região viva**, o que faz um leitor de tela reler
+  a sala inteira. A recriação agora acontece sob `aria-busy` — provado por `MutationObserver`
+  lendo o valor antigo de cada mutação: `true` → `false` em volta da troca.
+- **A paleta era um `listbox` que ninguém conseguia ouvir.** O foco fica no campo (é o que
+  permite continuar digitando), então o leitor não sabia qual comando estava sob as setas. O
+  campo agora vira `combobox` **enquanto a paleta existe**, com `aria-expanded` e
+  `aria-activedescendant`; ao fechar, todos os atributos são removidos — quem escreve na sala
+  não deve ouvir "caixa combinada" o tempo todo.
+- **As abas eram quatro paradas de Tab.** Agora são uma, com roving tabindex e `Home`/`End`.
+
+Segue valendo: skip link, `role="log"` com `aria-live`, `aria-live` na faixa de destino e nos
+avisos, `aria-label` em todo botão de ícone, `aria-hidden` em todo glifo decorativo, hierarquia
+de headings, `tab`/`tabpanel`, estados vazios com texto útil.
 
 ---
 
@@ -300,6 +349,7 @@ o dono é removido da lista de presença e nunca é alvo de "todas", mesmo estan
 | `06-decisoes-vigentes.png` | a gaveta de decisões |
 | `07-copia-congelada-offline.png` | o export aberto **sem nenhuma API no ar** — estado *cópia congelada*, envio bloqueado |
 | `08-contraste-corrigido-palha.png` | depois da correção de contraste: a paleta e o destino nominado intactos |
+| `09-teclado-mensagem-escolhida.png` | navegação por teclado: a mensagem escolhida pelas setas, com as ações dela abertas |
 
 ---
 
@@ -309,6 +359,7 @@ o dono é removido da lista de presença e nunca é alvo de "todas", mesmo estan
 |---|---|
 | `testes/teste_contraste.py` | 97 pares de cor, nos dois temas, **compostos como o navegador compõe** — véu sobre superfície, não token contra token. Reprovou 39 vezes antes de passar. |
 | `testes/teste_cookie.py` | o cookie do token nasce `HttpOnly`, `SameSite=Strict`, `Path=/` — e continua autenticando. Guarda também o fato que torna `HttpOnly` grátis: o `sala.js` nunca lê `document.cookie`. |
+| `testes/teste_a11y.py` | 41 invariantes de teclado, foco, ARIA e movimento reduzido. Não repete a medição de runtime (que está na §10): trava as condições sem as quais aquele comportamento deixa de existir. Provado contra 4 mutações — tirar o `tabindex` do log, devolver as 4 abas ao Tab, baixar o anel da busca para 10%, e fazer a mensagem nova recriar a lista: cada uma reprova. |
 
 Os dois nasceram vermelhos e passaram depois da correção — é o que os torna testes, e não
 carimbos.

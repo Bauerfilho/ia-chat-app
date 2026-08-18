@@ -21,8 +21,10 @@ for f in testes/teste_*.py; do
 done
 ```
 
-**11 arquivos** em 18/08/2026, **15 s** medidos nesta máquina. O laço reconta sozinho —
-o número envelhece, o comando não.
+A bateria inteira leva **~16 s** nesta máquina. De propósito não digo quantos arquivos
+são: enquanto este documento estava sendo escrito, a contagem foi de 10 para 13. Número
+de teste no meio de um texto é a mesma armadilha da âncora `arquivo:linha` — envelhece
+sozinho, sem avisar, e quem lê confia. **O laço acima é a verdade.**
 
 **Portas: 59900 e acima.** Os testes que sobem servidor usam essa faixa de propósito, para
 nunca colidirem com o app que o dono pode estar usando (8801) nem com o protótipo (8787).
