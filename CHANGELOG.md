@@ -1,5 +1,49 @@
 # CHANGELOG — ia-chat-app
 
+## 2026-08-18 (fim de tarde) — desempenho medido, e os gates param de medir a forma de ontem
+
+> Bateria: **27 arquivos verdes**, medido por exit code.
+
+### A interface viaja comprimida: 276 KB → 102 KB
+
+Ele pediu para priorizar o desempenho e eu não tinha medido nada. A página pesava
+276 KB de texto e o servidor não comprimia uma linha — e ele lê a sala no celular,
+por um túnel, em rede móvel.
+
+    /              15.827 →   4.932 B        sala.js    96.658 → 30.857 B  (69%)
+    estilo.css     70.546 →  17.288 B        /api/sala  71.338 → 26.485 B  (63%)
+    ─────────────────────────────────────────────────────────────────────
+    total         276.444 → 101.637 B  (64% menor)
+
+O `apple-touch-icon.png` fica fora — PNG já vem comprimido. Abaixo de 1 KB também
+não vale o cabeçalho.
+
+⚠️ **O SSE nunca passa pelo compressor.** gzip acumula bytes num buffer e entrega
+quando o bloco fecha; num stream, a mensagem chegaria quando o buffer enchesse, e o
+defeito apareceria como "está lento", nunca como erro.
+
+### Sete gates paravam de medir mecanismo
+
+O alvo de dedo aceitava só `44px` ou `48px` — os 56 px da HIG eram reprovados como
+se fossem defeito. As ações da mensagem cobravam `== 3`. A folga das abas cobrava a
+substring exata do CSS. Cada um quebraria quando o produto melhorasse.
+
+E o gate de offline confundia comentário com dependência: ele procurava `http://` no
+texto inteiro do `sala.js`, e o CSS já era limpo de comentários antes de medir. A
+assimetria é que estava errada.
+
+### O túnel do celular ganhou vigia
+
+`abrir-remoto.sh --vigiar` mantém no ar. A vigia **não** derruba um túnel que
+responde: reiniciar por precaução trocaria o endereço em uso, e o remédio mataria o
+paciente. A prova é de fora, por um GET no próprio endereço — `pgrep` não distingue
+processo vivo de processo que não responde.
+
+### E o modo do enxame virou endereço
+
+`?modo=neon` e `?modo=dourado` fecham a família dos deep-links. Quem mandava a alguém
+o link do painel neon via o dourado.
+
 ## 2026-08-18 (tarde) — o dourado recupera o que faltava, e o mapa vira leitura de verdade
 
 > Bateria: **25 arquivos verdes**, medido por exit code — o laço antigo julgava pelo
