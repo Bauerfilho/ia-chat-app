@@ -523,6 +523,19 @@ code,kbd,.num{font-family:var(--mono); font-variant-numeric:tabular-nums}
   background:var(--superf-alta);border:1px solid var(--borda-forte);
   border-radius:var(--raio-g);box-shadow:var(--sombra-g);overflow:hidden;
   animation:sobe var(--t-padrao) var(--ease)}
+/* Painel de RESULTADO (/quem, previsões): entra no FLUXO do compositor em vez de
+   flutuar. Flutuando, o resultado crescia sobre a conversa e virava um borrão
+   ilegível no meio do chat (defeito do dono, 18/08). No fluxo, o compositor
+   cresce, a conversa (1fr) encolhe e o chat SOBE; ✕/Esc fazem descer. */
+.paleta.paleta--painel{position:static;margin:0 0 var(--u);max-height:42vh;overflow:auto}
+.paleta-topo{display:flex;align-items:center;justify-content:space-between;
+  padding:6px var(--u2);border-bottom:1px solid var(--borda);background:var(--ouro-veu);
+  position:sticky;top:0}
+.paleta-rotulo{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--ouro-tinta);font-weight:600}
+.paleta-fecha{border:none;background:transparent;cursor:pointer;color:var(--tinta-2);
+  font-size:13px;line-height:1;padding:4px 6px;border-radius:var(--raio-p)}
+.paleta-fecha:hover{background:var(--ouro-veu);color:var(--tinta)}
 @keyframes sobe{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
 .paleta-item{display:flex;align-items:baseline;gap:var(--u2);width:100%;text-align:left;
   padding:10px var(--u2);cursor:pointer;background:transparent;border:none;

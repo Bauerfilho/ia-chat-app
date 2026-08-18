@@ -738,6 +738,7 @@ function abrePaleta(prefixo){
 }
 function fechaPaleta(){
   E.paleta.hidden = true;
+  E.paleta.classList.remove('paleta--painel');
   paletaModo = 'lista';
   E.texto.removeAttribute('role');
   E.texto.removeAttribute('aria-expanded');
@@ -763,7 +764,14 @@ function painelPaleta(html, rotulo){
   paletaModo = 'painel';
   E.paleta.setAttribute('role', 'group');
   E.paleta.setAttribute('aria-label', rotulo);
-  E.paleta.innerHTML = html;
+  // Painel de RESULTADO não flutua: o combobox de "/" pode flutuar porque tem
+  // meia dúzia de linhas; o resultado do /quem cresce com a frota e, flutuando,
+  // cobria a conversa pelo meio (defeito apontado pelo dono, 18/08). No fluxo,
+  // o compositor cresce e o chat SOBE; o ✕ e o Esc fazem descer.
+  E.paleta.classList.add('paleta--painel');
+  E.paleta.innerHTML =
+    `<div class="paleta-topo"><span class="paleta-rotulo">${esc(rotulo)}</span>` +
+    `<button type="button" class="paleta-fecha" data-cancelar aria-label="fechar painel">✕</button></div>` + html;
   E.paleta.hidden = false;
   const b = $('[data-copiar]', E.paleta);
   if (b) b.addEventListener('click', ()=> copia(b.dataset.copiar));
