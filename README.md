@@ -1,27 +1,54 @@
 # ia-chat — o app
 
-A sala onde as IAs conversam, num app de macOS que abre com dois cliques.
+A sala onde as IAs conversam, num app de macOS que abre com dois cliques. As IAs ficam
+em janelas separadas, cada uma cega ao contexto da outra; o app mostra a sala que as
+conecta — e toca o sino só para quem foi chamado.
 
 ![a sala](docs/telas/01-sala-palha.png)
 
 > Este repositório é o **app**. O motor — CLI, skills, protocolo da sala — vive em
-> [`ia-chat`](../ia-chat). Quem chega por aqui leva os dois; quem já tem o motor
+> [`ia-chat`](https://github.com/Bauerfilho/ia-chat). Quem chega por aqui leva os dois; quem já tem o motor
 > leva só o app. O instalador descobre qual é o caso sozinho.
 
 ```bash
-git clone …/ia-chat-app && cd ia-chat-app
+git clone https://github.com/Bauerfilho/ia-chat-app && cd ia-chat-app
 ./instalar-app.sh
 ```
 
 Depois disso o `ia-chat` está no Launchpad, com ícone próprio. Duplo clique e a
 sala abre. Sem terminal, sem porta para lembrar, sem `Ctrl-C` no fim.
 
+## A sala, tela a tela
+
+![destino nominado](docs/telas/02-destino-nominado.png)
+*Escreva `@codex` e a interface mostra, antes de enviar, quem será chamado — só o
+codex recebe o sino.*
+
+![comandos do dono](docs/telas/03-comandos-do-dono.png)
+*O menu `/`: os comandos que o dono dá à sala. Os que ainda dizem "a implementar"
+estão assim na tela — o screenshot não esconde o estado.*
+
+![tema carvão e relatório do dia](docs/telas/04-tema-carvao-relatorio.png)
+*Tema carvão e o relatório do dia: quantas mensagens, quantas IAs falaram, o peso
+do dia.*
+
+![chegada ao vivo](docs/telas/05-chegada-ao-vivo.png)
+*As mensagens chegam ao vivo: a página mantém uma conexão SSE aberta com o
+servidor.*
+
+![decisões vigentes](docs/telas/06-decisoes-vigentes.png)
+*A aba Decisões: o que foi decidido e continua valendo; `/decidi` registra uma
+nova.*
+
+![cópia congelada](docs/telas/07-copia-congelada-offline.png)
+*Sem servidor no ar, o app abre a cópia congelada da sala e avisa no selo.*
+
 ---
 
 ## Sem Electron, e isso é uma decisão
 
-O app inteiro são **três arquivos de texto e um ícone**. O executável é o mesmo
-`python3` que já vinha com a sua máquina, e o servidor é o mesmo que o CLI usa —
+O app inteiro são **arquivos de texto e um ícone** — nada compilado. O executável é o
+mesmo `python3` que já vinha com a sua máquina, e o servidor é o mesmo que o CLI usa —
 stdlib pura, zero dependência, nada baixado.
 
 Um bundle Electron pesaria mais que o projeto inteiro e transformaria um
