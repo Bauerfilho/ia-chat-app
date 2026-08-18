@@ -61,11 +61,20 @@ bash "$RAIZ/montar.sh"          # ícone e interface entram no bundle antes de c
 
 if [ -n "${IA_CHAT_DEST:-}" ]; then DEST="$IA_CHAT_DEST"
 elif [ -w /Applications ]; then DEST="/Applications"
-else DEST="$HOME/Applications"; mkdir -p "$DEST"; fi
+else DEST="$HOME/Applications"; fi
+# `mkdir -p` para os TRÊS caminhos, não só para o fallback.
+#
+# Achado de 18/08, auditando a instalação numa máquina que nunca teve o repositório:
+# com `IA_CHAT_DEST` apontando para um diretório que ainda não existe, o `cp` falhava
+# com "No such file or directory" — e o script seguia até o fim imprimindo os ✔, porque
+# o erro do `cp` não derrubava a execução. Quem usa a variável é justamente quem instala
+# fora do padrão: outro disco, pasta de testes, máquina compartilhada.
+mkdir -p "$DEST"
 
 ALVO="$DEST/ia-chat.app"
 [ -d "$ALVO" ] && rm -rf "$ALVO"
-cp -R "$APP" "$ALVO"
+# Sem `|| exit`, uma cópia que falha deixa o script anunciar sucesso sobre nada.
+cp -R "$APP" "$ALVO" || { echo "✗ não consegui copiar o app para $ALVO" >&2; exit 1; }
 chmod +x "$ALVO/Contents/MacOS/ia-chat"
 
 # Baixado como .zip, o app chega com quarentena e o Gatekeeper trava o duplo
