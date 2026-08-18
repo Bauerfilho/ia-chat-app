@@ -130,9 +130,25 @@ def main() -> int:
     checa("o HTML pede a tela inteira", 'viewport-fit=cover' in HTML)
 
     print("— o foco automático é de desktop —")
+    # O que importa é o MECANISMO: todo `E.texto.focus()` de arranque tem que estar
+    # atrás da guarda `pointer:fine`. A versão anterior comparava a LINHA INTEIRA, e
+    # reprovou quando alguém a melhorou — o `L3b` acrescentou "e não na janela do
+    # enxame", que está certo e continua respeitando a guarda.
+    #
+    # Gate que cobra texto literal mede a memória de quem o escreveu, não o
+    # comportamento: ele reprova melhoria e aprova qualquer reescrita que mantenha a
+    # string. Terceira ocorrência disto em 18/08 (a lista fixa de assets no `teste_e2e`
+    # e a mensagem de erro do zsh foram as outras).
+    import re as _re
+
+    arranques = [ln for ln in JS.splitlines()
+                 if "E.texto.focus()" in ln and ln.lstrip().startswith("if ")]
+    checa("existe a guarda de arranque do foco", bool(arranques),
+          "sumiu o `if ... E.texto.focus()` de arranque")
     checa("o campo só recebe foco no ponteiro fino",
-          "if (matchMedia('(pointer:fine)').matches) E.texto.focus();" in JS,
-          "no celular isso abriria o teclado sozinho e comeria metade da tela")
+          all("matchMedia('(pointer:fine)')" in ln for ln in arranques),
+          "no celular isso abriria o teclado sozinho e comeria metade da tela · "
+          + " | ".join(l.strip()[:80] for l in arranques))
 
     print(f"\n{_ok} ✔ / {_falhou} ✗")
     return 1 if _falhou else 0

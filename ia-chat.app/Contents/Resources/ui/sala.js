@@ -5,10 +5,16 @@
    GET  /api/sala?desde=N  -> {ultima, desde, msgs[], sala{}}
    GET  /api/sino          -> {notificar_operador, escrever}
    GET  /api/stream?desde=N-> SSE, event:msg
+   GET  /api/quem          -> presença (allowlist de leitura)
    GET  /api/iaswarm       -> {fonte, raiz, vivo, runs[]}
    GET  /api/iaswarm/remoto-> {eventos, log, resultado}  (leitura, um worker)
    POST /api/post          -> {de, texto, para[]}
    POST /api/sino          -> {notificar_operador}
+   POST /api/<goal|plan|concluir|parar|refaz|decidi>
+                           -> comandos do dono, allowlist fechada: argv constante,
+                              payload JSON pelo stdin do comando (--via-app), --de
+                              do servidor; plan/parar/refaz exigem "seco" (previsão)
+                              e depois "confirmado" (gate do servidor)
    Endpoints opcionais (/api/quem /api/decisoes /api/reservas /api/fio) degradam:
    quando não existem, a interface deriva o que dá da própria sala e diz que derivou.
    ═══════════════════════════════════════════════════════════════════════════ */
@@ -19,61 +25,57 @@ const IAS = ['claude','codex','kimi','agy','grok','qwen','ollama','deepseek','do
 const DONO = 'bauer';
 
 /* ── comandos do dono ──────────────────────────────────────────────────────
-   `onde` diz ONDE o comando age, e a paleta MOSTRA isso. Antes havia
-   `pronto:true/false`, e ele mentia dos dois lados: nenhum dos sete chegava a
-   `bin/iachat-comando` — os sete viravam mensagem de chat —, e ainda assim
-   `/plan` anunciava "todas as IAs vivas" e `/concluir` "quem foi designado",
-   insinuando execução que não existia. Os `false` não diziam o que fazer;
-   apareciam na tela e calavam. Comando morto na tela é pior que comando ausente.
+   `onde` diz ONDE o comando age, e a paleta MOSTRA isso. A história desta
+   tabela tem três eras, e cada uma pagou um preço:
 
-     sala     — vira mensagem na sala, e as IAs leem e agem. Não é consolo: é o
-                mecanismo para o qual a sala foi construída.
-     aqui     — atravessa o servidor e responde aqui mesmo. Só LEITURA.
-     terminal — NÃO atravessa. Mata processo ou gasta assinatura do dono, e a
-                paleta entrega a linha pronta para copiar em vez de fingir.
+   1. `sala` — os comandos viravam post de TEXTO: nenhum abria missão, nenhum
+      despachava, nenhum gravava `comando/estado.json`. A paleta prometia e
+      mentia. Comando morto na tela é pior que comando ausente.
+   2. `terminal` — pararam de prometer: a paleta mostrava a linha para copiar.
+      Honesto, mas não era o que o dono queria — ele quer os comandos
+      FUNCIONANDO no app (decisão dele, fase 9, 18/08).
+   3. `aqui` — a era atual: a paleta chama o `iachat-comando` DE VERDADE,
+      através do servidor, com três travas que vivem em `servir.py`:
+        · allowlist FECHADA — argv constante, texto do dono entra pelo stdin
+          do comando (`--via-app`), nunca como argumento;
+        · `--de` é o papel do SERVIDOR, nunca do cliente — foi aceitando
+          identidade do cliente que apareceu na sala uma mensagem assinada
+          `bauer` que ele não escreveu;
+        · o que gasta ou mata (`/plan`, `/parar`, `/refaz`) exige confirmação
+          EXPLÍCITA: a previsão aparece no painel ANTES, e só o botão confirma.
 
-   Por que `terminal` e não uma rota: o servidor roda com `--lan`, e mesmo sem
-   ele a loopback não é fronteira de confiança nesta máquina (ver o comentário
-   de `_ok_token` em `servir.py`: com 127.0.0.1 apareceu na sala uma mensagem
-   assinada `bauer` que ninguém escreveu). Um token vazado que posta mensagem se
-   retrata; um que mata a frota no meio de uma onda, não.
-
-   `/decidi` é `terminal` e não `sala` de propósito: postado como mensagem ele
-   NÃO entra em `decisoes.md`, e uma decisão que existe na sala mas não no
-   registro é a dívida dos dois instrumentos de volta, só que de roupa nova. */
+   `linha` e `porque` ficam na tabela como DEGRADAÇÃO: se o servidor não tiver
+   a rota (bundle velho), a paleta mostra a linha do terminal, como o `/quem`
+   sempre fez. `/decidi` atravessa como os demais: quem grava no registro é o
+   CLI, não a mensagem. */
 const COMANDOS = [
-  /* Os três eram `sala`, e isso os transformava em post de TEXTO: nenhum abria missão,
-     nenhum despachava a frota, nenhum gravava `comando/estado.json`. A paleta prometia
-     "as IAs da sala leem e agem" e o usuário saía achando que tinha aberto uma rodada —
-     sem PID para o `/parar` matar, sem plano para o `/concluir` autorizar.
-
-     O motivo de virarem `terminal` é o MESMO já escrito acima para o `/decidi`: postado
-     como mensagem, ele não entra no registro, e o que existe na sala mas não no registro
-     é a dívida dos dois instrumentos de volta. Missão sem `estado.json` é exatamente
-     isso. Achado do worker `j1-app-paralelo`, que resumiu bem: "é o `--lan` outra vez —
-     a mesma palavra, outro cano". */
-  {cmd:'/goal',     desc:'Enunciar o objetivo da rodada',                 onde:'terminal', quem:'abre a missão no disco',
-   porque:'a missão vive em `comando/estado.json`, e um post de texto não a cria.',
-   linha:'iachat-comando goal "<o objetivo>"'},
-  {cmd:'/plan',     desc:'A frota ativa planeja junta e devolve o plano', onde:'terminal', quem:'despacha a frota',
-   porque:'despacha processos pagos e grava o PID de cada um — nada disso cabe numa mensagem.',
-   linha:'iachat-comando plan'},
-  {cmd:'/concluir', desc:'Autorizar: pode aplicar',                       onde:'terminal', quem:'a única etapa que muda o mundo',
-   porque:'é a autorização para APLICAR, e ela recusa se não houver plano no disco.',
-   linha:'iachat-comando concluir'},
-  {cmd:'/quem',     desc:'Quem está vivo, no quê, há quanto tempo',       onde:'aqui',     quem:'lê o estado e responde aqui'},
-  {cmd:'/parar',    desc:'Abortar a missão em andamento',                 onde:'terminal', quem:'mata processo',
-   porque:'mata processo, e matar não tem desfazer.', linha:'iachat-comando parar'},
-  {cmd:'/refaz',    desc:'Redisparar worker morto de onde parou',         onde:'terminal', quem:'gasta assinatura',
-   porque:'redispara uma IA paga, e isso gasta a assinatura dele.', linha:'iachat-comando refaz --ia <ia>'},
-  {cmd:'/decidi',   desc:'Registrar decisão que todas obedecem',          onde:'terminal', quem:'grava no registro',
-   porque:'o registro durável é um arquivo, e ele se escreve no terminal.',
-   linha:'iachat-comando decidi --porque "<o motivo>" "<a decisão>"'},
+  {cmd:'/goal',     desc:'Enunciar o objetivo da rodada',                 onde:'aqui', quem:'abre a missão no disco',
+   linha:'iachat-comando goal "<o objetivo>"',
+   porque:'sem servidor, o terminal abre a missão.'},
+  {cmd:'/plan',     desc:'A frota ativa planeja junta e devolve o plano', onde:'aqui', quem:'despacha a frota',
+   confirma:'despachar a frota agora',
+   linha:'iachat-comando plan',
+   porque:'sem servidor, o terminal despacha.'},
+  {cmd:'/concluir', desc:'Autorizar: pode aplicar',                       onde:'aqui', quem:'a única etapa que muda o mundo',
+   linha:'iachat-comando concluir',
+   porque:'sem servidor, o terminal autoriza.'},
+  {cmd:'/quem',     desc:'Quem está vivo, no quê, há quanto tempo',       onde:'aqui', quem:'lê o estado e responde aqui'},
+  {cmd:'/parar',    desc:'Abortar a missão em andamento',                 onde:'aqui', quem:'mata processo',
+   confirma:'parar a missão agora',
+   linha:'iachat-comando parar',
+   porque:'sem servidor, o terminal para.'},
+  {cmd:'/refaz',    desc:'Redisparar worker morto de onde parou',         onde:'aqui', quem:'gasta assinatura',
+   confirma:'redisparar agora',
+   linha:'iachat-comando refaz --ia <ia>',
+   porque:'sem servidor, o terminal redispara.'},
+  {cmd:'/decidi',   desc:'Registrar decisão que todas obedecem',          onde:'aqui', quem:'grava no registro',
+   linha:'iachat-comando decidi --porque "<o motivo>" "<a decisão>"',
+   porque:'sem servidor, o terminal registra.'},
 ];
 const ONDE = {
-  sala:     {rotulo:'vai para a sala', vindouro:'nao'},
-  aqui:     {rotulo:'responde aqui',   vindouro:'nao'},
-  terminal: {rotulo:'só no terminal',  vindouro:'sim'},
+  sala:     {rotulo:'vai para a sala',       vindouro:'nao'},
+  aqui:     {rotulo:'atravessa o servidor',  vindouro:'nao'},
+  terminal: {rotulo:'só no terminal',        vindouro:'sim'},
 };
 /* O comando é a PRIMEIRA palavra, e só. `/parar` não casa `/parardetudo`, e
    texto que apenas cita `/parar` no meio da frase continua sendo conversa. */
@@ -483,6 +485,12 @@ function painelPaleta(html, rotulo){
   E.paleta.hidden = false;
   const b = $('[data-copiar]', E.paleta);
   if (b) b.addEventListener('click', ()=> copia(b.dataset.copiar));
+  // Confirmação dos comandos que gastam ou matam: o botão carrega o comando e
+  // o payload da previsão; `confirmaComando` acrescenta `confirmado` e chama.
+  $$('[data-confirmar]', E.paleta).forEach(bt =>
+    bt.addEventListener('click', ()=> confirmaComando(bt.dataset.confirmar, bt.dataset.payload)));
+  $$('[data-cancelar]', E.paleta).forEach(bt =>
+    bt.addEventListener('click', ()=> { fechaPaleta(); E.texto.focus(); }));
 }
 
 async function copia(txt){
@@ -511,7 +519,9 @@ function mostraLinha(c){
     </div>`, `${c.cmd}: a linha para o terminal`);
 }
 
-/* `/quem` é o único que atravessa, e atravessa porque só LÊ. */
+/* `/quem` atravessa porque só LÊ. Os demais comandos do dono também
+   atravessam (decisão dele, fase 9) — mas com allowlist fechada, `--de` do
+   servidor e confirmação explícita; quem os chama é `rodaComando`, abaixo. */
 async function rodaQuem(){
   painelPaleta('<div class="paleta-item"><span class="paleta-desc">consultando…</span></div>',
                '/quem: consultando');
@@ -538,6 +548,196 @@ async function rodaQuem(){
       <span class="paleta-desc">${esc(d.estado || 'nenhuma missão aberta')}</span>
       <span class="paleta-quem">agora</span>
     </div>${linhas}`, '/quem: quem está vivo');
+}
+
+/* ── os comandos do dono, DE VERDADE, pelo servidor ──────────────────────
+   A paleta chama o `iachat-comando` através da allowlist de `servir.py`:
+   argv constante, texto do dono pelo stdin do comando (`--via-app`), `--de`
+   é o papel do servidor. O que gasta ou mata passa por `painelConfirma`:
+   a previsão (`seco`) aparece ANTES, e só o botão confirma — o servidor
+   RECUSA o pedido sem `confirmado`, então isto é gate, não cortesia.
+   Servidor sem a rota (bundle velho) degrada para a linha do terminal. */
+const ROTAS_CMD = {
+  '/goal':'/api/goal', '/plan':'/api/plan', '/concluir':'/api/concluir',
+  '/parar':'/api/parar', '/refaz':'/api/refaz', '/decidi':'/api/decidi',
+};
+
+/** POST na rota do comando. `{degrada:true}` quando o servidor não tem a
+    rota (404/501/rede) — o painel mostra a linha do terminal, não um beco. */
+async function pedeComando(c, payload){
+  try{
+    const r = await fetch(url(ROTAS_CMD[c.cmd]), {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(payload || {}),
+    });
+    if (r.status === 404 || r.status === 501) return {degrada:true};
+    let d = {}; try{ d = await r.json(); }catch(e){}
+    if (!r.ok && !('ok' in d)) d = {ok:false, erro: d.erro || ('HTTP ' + r.status)};
+    return d;
+  }catch(e){
+    return {degrada:true};
+  }
+}
+
+function rodaComando(c, txt){
+  const arg = txt.slice(c.cmd.length).trim();
+  if (c.cmd === '/quem')      return rodaQuem();
+  if (c.cmd === '/goal')      return rodaGoal(c, arg);
+  if (c.cmd === '/plan')      return rodaPlan(c, arg);
+  if (c.cmd === '/concluir')  return rodaConcluir(c, arg);
+  if (c.cmd === '/parar')     return rodaParar(c);
+  if (c.cmd === '/refaz')     return rodaRefaz(c, arg);
+  if (c.cmd === '/decidi')    return rodaDecidi(c, arg);
+  return mostraLinha(c);
+}
+
+function painelEspera(c, acao){
+  painelPaleta(`<div class="paleta-item"><span class="paleta-desc">${acao}</span></div>`,
+               `${c.cmd}: ${acao.replace('…','')}`);
+}
+function painelUso(c, titulo, ex){
+  painelPaleta(`
+    <div class="paleta-item">
+      <span class="paleta-cmd" translate="no">${c.cmd}</span>
+      <span class="paleta-desc">${esc(titulo)}</span>
+      <span class="paleta-quem">como usar</span>
+    </div>
+    <div class="paleta-item">
+      <code class="paleta-desc" translate="no">${esc(ex)}</code>
+    </div>`, `${c.cmd}: como usar`);
+}
+function painelResultado(c, d){
+  if (d.ok === false || d.erro){
+    // Recusa do CLI (exit 2/3) é resposta, não defeito: mostra tal qual.
+    return painelPaleta(`
+      <div class="paleta-item">
+        <span class="paleta-cmd" translate="no">${c.cmd}</span>
+        <span class="paleta-desc"><code translate="no" style="white-space:pre-wrap">${esc(d.erro || 'o comando recusou')}</code></span>
+        <span class="paleta-quem">recusado</span>
+      </div>`, `${c.cmd}: resposta do comando`);
+  }
+  const aviso = d.aviso ? `
+    <div class="paleta-item">
+      <span class="paleta-desc"><code translate="no" style="white-space:pre-wrap">${esc(d.aviso)}</code></span>
+    </div>` : '';
+  painelPaleta(`
+    <div class="paleta-item">
+      <span class="paleta-cmd" translate="no">${c.cmd}</span>
+      <span class="paleta-desc"><code translate="no" style="white-space:pre-wrap">${esc(d.saida || 'feito.')}</code></span>
+      <span class="paleta-quem">feito</span>
+    </div>${aviso}`, `${c.cmd}: resposta do comando`);
+}
+/** Previsão no painel + botão de confirmar. Nada aconteceu ainda: quem prova
+    é o `seco` do CLI; o botão só manda o pedido com `confirmado`. */
+function painelConfirma(c, previsao, payload){
+  painelPaleta(`
+    <div class="paleta-item">
+      <span class="paleta-cmd" translate="no">${c.cmd}</span>
+      <span class="paleta-desc"><code translate="no" style="white-space:pre-wrap">${esc(previsao)}</code></span>
+      <span class="paleta-quem">previsão — nada aconteceu ainda</span>
+    </div>
+    <button type="button" class="paleta-item" data-confirmar="${c.cmd}"
+            data-payload="${esc(JSON.stringify(payload || {}))}">
+      <span class="paleta-cmd">confirmar</span>
+      <span class="paleta-desc">${esc(c.confirma || 'executar agora')}</span>
+      <span class="paleta-quem">gasta ou mata</span>
+    </button>
+    <button type="button" class="paleta-item" data-cancelar="1">
+      <span class="paleta-cmd">cancelar</span>
+      <span class="paleta-desc">não fazer nada</span>
+      <span class="paleta-quem">voltar</span>
+    </button>`, `${c.cmd}: confirmar antes de ${c.cmd === '/parar' ? 'parar' : 'gastar'}`);
+}
+async function confirmaComando(cmd, payloadJson){
+  const c = COMANDOS.find(x => x.cmd === cmd);
+  if (!c) return;
+  let payload = {};
+  try{ payload = JSON.parse(payloadJson || '{}'); }catch(e){}
+  payload.confirmado = true;
+  painelEspera(c, 'executando…');
+  const d = await pedeComando(c, payload);
+  if (d.degrada) return mostraLinha(c);
+  painelResultado(c, d);
+}
+
+async function rodaGoal(c, arg){
+  if (!arg) return painelUso(c, 'diga o enunciado da rodada', '/goal <o objetivo>');
+  painelEspera(c, 'abrindo a missão…');
+  const d = await pedeComando(c, {texto: arg});
+  if (d.degrada) return mostraLinha(c);
+  painelResultado(c, d);
+}
+async function rodaPlan(c, arg){
+  if (arg === 'colher'){
+    // colher só lê os planos do disco e devolve o resumo à sala: sem confirmação.
+    painelEspera(c, 'colhendo os planos…');
+    const d = await pedeComando(c, {colher: true});
+    if (d.degrada) return mostraLinha(c);
+    return painelResultado(c, d);
+  }
+  painelEspera(c, 'prevendo o despacho…');
+  const d = await pedeComando(c, {seco: true});
+  if (d.degrada) return mostraLinha(c);
+  if (d.ok === false || d.erro) return painelResultado(c, d);
+  painelConfirma(c, d.saida, {});
+}
+async function rodaConcluir(c, arg){
+  painelEspera(c, 'autorizando…');
+  const d = await pedeComando(c, {texto: arg});
+  if (d.degrada) return mostraLinha(c);
+  painelResultado(c, d);
+}
+async function rodaParar(c){
+  painelEspera(c, 'vendo o que seria parado…');
+  const d = await pedeComando(c, {seco: true});
+  if (d.degrada) return mostraLinha(c);
+  if (d.ok === false || d.erro) return painelResultado(c, d);
+  painelConfirma(c, d.saida, {});
+}
+async function rodaRefaz(c, arg){
+  if (!arg){
+    // Sem o nome da IA, mostra quem está na missão para ele escolher.
+    painelEspera(c, 'vendo quem está na missão…');
+    try{
+      const r = await fetch(url('/api/quem'));
+      const q = await r.json();
+      const linhas = (q.quem || [])
+        .filter(x => x.fazendo && x.fazendo !== '—')
+        .map(x => `<div class="paleta-item">
+          <span class="paleta-cmd" translate="no">${esc(x.ia)}</span>
+          <span class="paleta-desc">${esc(x.estado)} · ${esc(x.fazendo)}</span>
+        </div>`).join('');
+      return painelPaleta(`
+        <div class="paleta-item">
+          <span class="paleta-cmd" translate="no">/refaz</span>
+          <span class="paleta-desc">diga qual IA: <code translate="no">/refaz &lt;ia&gt;</code></span>
+          <span class="paleta-quem">como usar</span>
+        </div>${linhas}`, '/refaz: qual IA?');
+    }catch(e){ return painelUso(c, 'diga qual IA redisparar', '/refaz <ia>'); }
+  }
+  painelEspera(c, 'prevendo a retomada…');
+  const d = await pedeComando(c, {ia: arg, seco: true});
+  if (d.degrada) return mostraLinha(c);
+  if (d.ok === false || d.erro) return painelResultado(c, d);
+  painelConfirma(c, d.saida, {ia: arg});
+}
+async function rodaDecidi(c, arg){
+  // A sintaxe do app: `/decidi <a decisão> | <o motivo>`. O motivo é
+  // obrigatório — gate do iachat-decide — e o `|` é o jeito de pedir os dois
+  // sem montar flag nenhuma no cliente.
+  const corte = arg.indexOf('|');
+  if (corte < 0)
+    return painelUso(c, 'a decisão e o motivo, separados por |',
+                     '/decidi <a decisão> | <o motivo>');
+  const texto = arg.slice(0, corte).trim();
+  const porque = arg.slice(corte + 1).trim();
+  if (!texto || !porque)
+    return painelUso(c, 'decisão e motivo precisam de conteúdo',
+                     '/decidi <a decisão> | <o motivo>');
+  painelEspera(c, 'registrando a decisão…');
+  const d = await pedeComando(c, {texto, porque});
+  if (d.degrada) return mostraLinha(c);
+  painelResultado(c, d);
 }
 
 function escolhePaleta(cmd){
@@ -763,9 +963,13 @@ async function envia(){
   if (!txt) return;
   // Comando que não é conversa não vira mensagem. Antes, `/parar` no campo era
   // postado no chat como texto — a sala recebia a palavra e nada parava.
+  // Agora os sete atravessam o servidor (`rodaComando`) — e o campo é consumido:
+  // o painel mostra a resposta, e o que sobrou de texto não fica boiando.
   const c = cmdDe(txt);
   if (c && c.onde !== 'sala'){
-    return c.onde === 'aqui' ? rodaQuem() : mostraLinha(c);
+    E.texto.value = ''; ajustaAltura(); atualizaDestino();
+    E.conta.textContent = fmtNum.format(0);
+    return rodaComando(c, txt);
   }
   const alvos = alvosDoTexto(txt);
   E.enviar.disabled = true;
@@ -967,7 +1171,7 @@ if (window.CONGELADO){                       // export offline: a sala vem dentr
 ajustaAltura();
 // foco inicial: desktop, campo primário único — é onde a mão dele já está
 // só no ponteiro fino: no celular, focar sozinho abre o teclado e come metade da tela
-if (matchMedia('(pointer:fine)').matches) E.texto.focus();
+if (matchMedia('(pointer:fine)').matches && !/[?&]janela=enxame/.test(location.search)) E.texto.focus();
 
 /* ═══════════════════════════════════════════════════════════════════════════
    IASWARM · janela dourada — mesma leitura do painel neon, outro humor.
@@ -976,7 +1180,7 @@ if (matchMedia('(pointer:fine)').matches) E.texto.focus();
    Controle remoto (pedido novo): clicar o NOME da IA abre dados + terminal.
    ═══════════════════════════════════════════════════════════════════════════ */
 const EX_CORES = {
-  agy:'#4285F4', kimi:'#856EFF', codex:'#12A594', grok:'#E8EDF2',
+  agy:'#4285F4', kimi:'#856EFF', codex:'#12A594', grok:'#5F6977',
   qwen:'#B866CD', ollama:'#E0982A', deepseek:'#4F80F0', hermes:'#C9A227',
   copilot:'#4285F4', dourada:'#C9A227', claude:'#D97757',
   openai:'#12A594', anthropic:'#D97757', google:'#4285F4', gemini:'#4285F4',
@@ -1474,4 +1678,16 @@ if (EX.raiz){
     e.currentTarget.setAttribute('aria-pressed', String(on));
     e.currentTarget.textContent = on ? 'modo dourado' : 'modo neon';
   });
+}
+
+if (/[?&]janela=enxame/.test(location.search)) {
+  janelaEnxame(true);
+  const q = new URLSearchParams(location.search);
+  const abrir = q.get('abrir');
+  const remoto = q.get('remoto');
+  if (abrir) EX.swarm = abrir;
+  if (remoto && remoto.includes('/')) {
+    const [rid, wid] = remoto.split('/');
+    setTimeout(()=> abreRemoto(rid, wid), 600);
+  }
 }

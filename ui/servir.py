@@ -69,36 +69,60 @@ CFG = {"escrever": False, "papel": "bauer", "token": ""}
 
 # — os comandos do dono que ATRAVESSAM o servidor ————————————————————————
 #
-# A allowlist é FECHADA e tem exatamente um item, porque a régua é: **leitura
-# atravessa, destruição não**. `quem` lê estado e devolve texto; `parar` mata
-# processo e `refaz` gasta assinatura do dono.
+# Decisão do dono (fase 9, 18/08): os comandos de barra FUNCIONAM a partir do
+# app — não viram post de texto nem linha para copiar. A régua de segurança é a
+# mesma do CLI, fechada em três travas:
 #
-# `parar` e `refaz` não atravessam NEM de 127.0.0.1, e o motivo está escrito
-# vinte linhas abaixo, em `_ok_token`: com o servidor na loopback apareceu na sala
-# uma mensagem assinada `bauer` que ninguém escreveu. Loopback protege da REDE,
-# não desta MÁQUINA — várias IAs rodam aqui e todas a alcançam. Some-se que o
-# token dura 86400 s e também viaja na URL (`?t=`), logo vai parar em histórico
-# de shell, log e captura de tela. Um token vazado que posta mensagem se retrata;
-# um que mata a frota do dono no meio de uma onda, não.
+# 1. ALLOWLIST FECHADA, argv CONSTANTE. Cada rota é cravada no código e mapeia
+#    para um subcomando fixo. Não há shell=True, não há string concatenada, e o
+#    cliente não escolhe o comando nem um argumento sequer. Texto do dono NUNCA
+#    vira argumento de linha de comando: ele entra como UM OBJETO JSON pelo
+#    stdin do comando (flag `--via-app`, validada chave a chave no próprio
+#    `iachat-comando`, em `le_via_app` — chave fora do mapa é recusada antes de
+#    tocar no despacho).
 #
-# Há ainda uma assimetria que não é de rede: o `parar` só é seguro porque confere
-# o instante de nascimento do processo e a marca do worker NO INSTANTE do kill.
-# Uma interface insere uma pausa humana entre ler a lista e apertar o botão — que
-# é exatamente a janela em que um PID é reciclado. A prova vive no CLI, no ato.
+# 2. IDENTIDADE DO SERVIDOR, nunca do cliente. O `--de` sai de CFG["papel"] —
+#    o papel com que este servidor subiu. Foi aceitando identidade do payload
+#    que apareceu na sala, em 17/08, uma mensagem assinada `bauer` que ele não
+#    escreveu; e o CLI ajuda: sem terminal e sem `--de`, ele RECUSA assinar
+#    pelo dono (`autor()` no iachat-comando). Por isso o servidor sempre passa
+#    `--de` — o dele.
 #
-# O ganho de ligar `parar` aqui seria de segundos; a frota é despachada do
-# terminal de qualquer maneira. O prejuízo não tem desfazer.
+# 3. MOSTRAR ANTES DE GASTAR OU MATAR. `plan` (despacha frota paga), `parar`
+#    (mata processo) e `refaz` (gasta assinatura) só atravessam em dois tempos:
+#    primeiro o pedido com `"seco": true` — a previsão do CLI, sem efeito
+#    colateral — e só depois o pedido com `"confirmado": true`. Sem um dos
+#    dois, o pedido morre aqui com 400: a confirmação é gate do SERVIDOR, não
+#    cortesia do JavaScript. A prova de identidade do alvo continua valendo é
+#    na hora do kill (`confere_dono`, fail-closed), porque entre a previsão e o
+#    clique há uma pausa humana em que um PID pode ser reciclado — a previsão
+#    mostra o presente; quem prova é o instante.
 #
-# COMO A ROTA É CONSTRUÍDA: o valor é uma TUPLA DE ARGUMENTOS constante. Não há
-# `shell=True`, não há string concatenada, e o cliente não escolhe o comando nem
-# um argumento sequer — nem sub-rota, nem `--run`, nem caminho. Ele só escolhe SE
-# chama. Texto de usuário nunca entra na linha de comando.
+# `quem` é o único GET: só lê. Todo o resto é POST, porque muda o mundo.
 # Mesmo raciocínio do núcleo: o comando vive ao lado dele, onde quer que ele esteja.
 IACHAT_COMANDO = _acha_nucleo() / "iachat-comando"
 COMANDOS_HTTP: dict[str, tuple[str, ...]] = {"quem": ("quem", "--json")}
+# Rotas de POST. nome → (subcomando, aceita `--de`). `refaz` não assina nada
+# (não posta na sala), por isso é o único sem `--de`.
+COMANDOS_POST: dict[str, tuple[str, bool]] = {
+    "goal": ("goal", True),
+    "plan": ("plan", True),
+    "concluir": ("concluir", True),
+    "parar": ("parar", True),
+    "refaz": ("refaz", False),
+    "decidi": ("decidi", True),
+}
+# Os que gastam ou matam: sem `seco` no payload, o pedido tem que trazer
+# `confirmado`. (`plan --colher` só lê os planos; o tratamento está em
+# `_comando_post`.)
+EXIGEM_CONFIRMACAO = ("plan", "parar", "refaz")
 # Teto de tempo: o `quem` varre a tabela de processos. Se travar, a thread do
 # servidor fica presa e a vaga não volta — o mesmo problema do SSE sem teto.
 TETO_COMANDO_S = 8
+# POST despacha frota (vários Popen, cada um sondando o `lstart`) ou mata com
+# espera educada de SIGTERM — custa mais que uma leitura. 20 s cobre com folga
+# sem virar thread presa.
+TETO_COMANDO_POST_S = 20
 
 # O sino do DONO usa a infraestrutura que o ia-chat já possui. O estado não
 # mora aqui: continua sendo `config.json:notificar_operador`. Ao ligar pelo app,
@@ -552,10 +576,11 @@ class Sala(BaseHTTPRequestHandler):
         })
 
     def _comando(self, nome: str):
-        """Roda UM comando da allowlist e devolve o JSON dele. Nada do cliente entra.
+        """Roda UM comando de LEITURA da allowlist e devolve o JSON dele.
 
-        `parar` e `refaz` não têm rota — e se um dia alguém acrescentar o nome aqui
-        sem acrescentar em `COMANDOS_HTTP`, o pedido morre neste `if`, não no shell.
+        Nada do cliente entra no argv. Se um dia alguém acrescentar o nome aqui
+        sem acrescentar em `COMANDOS_HTTP`, o pedido morre neste `if`, não no
+        shell. Os comandos que MUDAM o mundo têm outra porta: `_comando_post`.
         """
         argv = COMANDOS_HTTP.get(nome)
         if argv is None:
@@ -584,6 +609,64 @@ class Sala(BaseHTTPRequestHandler):
             return self._json(json.loads(r.stdout))
         except json.JSONDecodeError:
             return self._json({"erro": "o comando não devolveu JSON"}, 500)
+
+    def _comando_post(self, nome: str, dados: dict):
+        """Roda UM comando da allowlist de POST, com o payload no stdin dele.
+
+        O argv é constante: só o subcomando (mapeado em `COMANDOS_POST`), o
+        `--de` do papel com que ESTE servidor subiu (quando o comando assina
+        algo) e `--via-app`. Nada do cliente entra na linha de comando — o JSON
+        vai pelo stdin e é validado no CLI, chave a chave (`le_via_app`).
+
+        Gate do mostrar-antes: `plan` (fora colher), `parar` e `refaz` (fora
+        seco) exigem `"confirmado": true` no payload. A interface mostra a
+        previsão e só então confirma; quem pula a previsão morre aqui, não no
+        clique — a confirmação é gate do servidor.
+        """
+        alvo = COMANDOS_POST.get(nome)
+        if alvo is None:
+            return self._json({"erro": f"'{nome}' não atravessa o servidor"}, 404)
+        sub, aceita_de = alvo
+        if nome in EXIGEM_CONFIRMACAO:
+            so_leitura = dados.get("seco") is True or (
+                nome == "plan" and dados.get("colher") is True)
+            if not so_leitura and dados.get("confirmado") is not True:
+                return self._json(
+                    {"erro": "este comando gasta ou mata: primeiro a previsão "
+                             "(payload com \"seco\": true), que a interface mostra; "
+                             "só depois a confirmação (\"confirmado\": true)."}, 400)
+        if not IACHAT_COMANDO.is_file():
+            return self._json(
+                {"erro": "iachat-comando não está instalado nesta máquina",
+                 "linha": f"iachat-comando {sub}"}, 501)
+        argv = [sys.executable, str(IACHAT_COMANDO), sub]
+        if aceita_de:
+            # Identidade do SERVIDOR, nunca do cliente (trava 2 da allowlist).
+            argv += ["--de", CFG["papel"]]
+        argv.append("--via-app")
+        # `confirmado` é a trava DESTA camada; o CLI não a conhece. Não viaja.
+        payload = {k: v for k, v in dados.items() if k != "confirmado"}
+        try:
+            r = subprocess.run(
+                argv, capture_output=True, text=True,
+                input=json.dumps(payload, ensure_ascii=False),
+                timeout=TETO_COMANDO_POST_S,
+                env={**os.environ, "IACHAT_HOME": str(core.home())},
+            )
+        except subprocess.TimeoutExpired:
+            return self._json(
+                {"erro": f"o comando passou de {TETO_COMANDO_POST_S}s"}, 504)
+        except OSError as e:
+            return self._json({"erro": f"não consegui rodar: {e}"}, 500)
+        saida = (r.stdout or "").strip()
+        aviso = (r.stderr or "").strip()
+        if r.returncode == 0:
+            return self._json({"ok": True, "comando": nome,
+                               "saida": saida[:8000], "aviso": aviso[:2000]})
+        # Recusa do comando (exit 2/3) não é defeito do servidor: é o
+        # fail-closed do CLI falando. A interface mostra tal qual.
+        return self._json({"ok": False, "comando": nome, "codigo": r.returncode,
+                           "erro": (aviso or saida)[:4000]}, 409)
 
     def _garante_sino_operador(self) -> tuple[bool, str]:
         """Instala/recarrega o LaunchAgent só depois do clique em LIGAR.
@@ -662,7 +745,11 @@ class Sala(BaseHTTPRequestHandler):
         u = urlparse(self.path)
         if not self._ok_token(parse_qs(u.query)):
             return self._nega()
-        if u.path not in ("/api/post", "/api/sino"):
+        # Rotas cravadas: `/api/post`, `/api/sino` e UM POST por comando da
+        # allowlist. Não existe `/api/comando?nome=…` — rota paramétrica
+        # convidaria o cliente a escolher o que roda.
+        nome_comando = u.path[len("/api/"):] if u.path.startswith("/api/") else ""
+        if u.path not in ("/api/post", "/api/sino") and nome_comando not in COMANDOS_POST:
             return self._json({"erro": "rota inexistente"}, 404)
         if not CFG["escrever"]:
             return self._json({"erro": "servidor em modo leitura"}, 403)
@@ -702,6 +789,11 @@ class Sala(BaseHTTPRequestHandler):
             dados = json.loads(self.rfile.read(n) or b"{}")
             if not isinstance(dados, dict):
                 return self._json({"erro": "corpo JSON precisa ser objeto"}, 400)
+            if nome_comando in COMANDOS_POST:
+                # Allowlist de POST: o payload inteiro viaja pelo stdin do
+                # comando, nunca pelo argv. O gate de confirmação mora em
+                # `_comando_post`.
+                return self._comando_post(nome_comando, dados)
             if u.path == "/api/sino":
                 ligado = dados.get("ligado")
                 if type(ligado) is not bool:
