@@ -56,6 +56,31 @@ def sem_comentarios_css(texto: str) -> str:
     return re.sub(r"/\*.*?\*/", "", texto, flags=re.DOTALL)
 
 
+def sem_comentarios_js(texto: str) -> str:
+    """Tira do JS o que é COMENTÁRIO, e só o que tem certeza de ser.
+
+    O CSS já era limpo antes de medir; o JS não, e a assimetria cobrava um preço:
+    documentar o próprio código com um endereço de exemplo deixava o gate vermelho,
+    embora nada fosse carregado da rede. O gate quer saber se a interface BUSCA algo
+    remoto — comentário não busca nada.
+
+    Na dúvida, MANTÉM o texto. Uma linha ambígua continua sendo medida, e o gate
+    reprova: é melhor um falso vermelho que um falso verde. Por isso a linha só é
+    limpa quando o que vem antes do `//` não tem aspa, crase nem barra — o que
+    descarta `'http://…'`, `` `…//…` `` e a barra de uma regex literal.
+    """
+    sem_bloco = re.sub(r"/\*.*?\*/", "", texto, flags=re.DOTALL)
+    saida = []
+    for linha in sem_bloco.split("\n"):
+        i = linha.find("//")
+        antes = linha[:i]
+        if i >= 0 and not any(c in antes for c in "\"'`/"):
+            saida.append(antes)          # comentário de fim de linha, sem ambiguidade
+        else:
+            saida.append(linha)          # ambíguo: fica, e o gate julga
+    return "\n".join(saida)
+
+
 def problemas(ui: Path) -> list[str]:
     erros: list[str] = []
     textos: dict[str, str] = {}
@@ -87,7 +112,7 @@ def problemas(ui: Path) -> list[str]:
     if re.search(r"(?i)url\(\s*['\"]?\s*//", css):
         erros.append("estilo.css contém url(//...)")
 
-    js = textos.get("sala.js", "")
+    js = sem_comentarios_js(textos.get("sala.js", ""))
     if re.search(r"(?i)https?://", js):
         erros.append("sala.js contém http(s)://")
     if re.search(r"['\"`]\s*//[A-Za-z0-9]", js):
