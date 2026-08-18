@@ -300,6 +300,81 @@ de headings, `tab`/`tabpanel`, estados vazios com texto útil.
 
 ---
 
+## 10-bis. O celular — que é o caminho principal dele
+
+A interface foi desenhada, medida e provada no desktop. No telefone, nunca — e o
+telefone é por onde ele mais usa. Verificado num contexto de navegador móvel real
+(toque, DPR 3, user agent de iPhone), em 390×844 e 430×932.
+
+### O que estava quebrado, e não era pouco
+
+**A gaveta ocupava 336 px de 390 — 86% da tela — sobreposta e quase vazia, e não
+havia como fechá-la.** Os dois botões que a controlam (painel e tema) vivem no
+trilho, e o trilho estava `display:none` abaixo de 760 px. A conversa ficava numa
+faixa de 54 px. O app era inutilizável no telefone, e a captura
+`docs/telas/10-celular-antes.png` mostra isso melhor que qualquer parágrafo.
+
+### A adaptação — mesma paleta, mesmo humor, um polegar
+
+O trilho **deixa de ser uma coluna e vira uma faixa no topo** com as mesmas peças
+deitadas: marca, presença rolando na horizontal (com máscara nas bordas, que diz
+que rola sem precisar de seta) e os dois botões. Mesmo carvão, mesmo filete
+dourado, mesma cor por IA. Nada foi redesenhado — foi deitado.
+
+A gaveta virou uma **folha que entra**, fechada por padrão, com três saídas: o
+botão do trilho, um ✕ dentro dela e o véu atrás. `Escape` também fecha.
+
+| | antes | depois |
+|---|---|---|
+| conversa em 390 px | 54 px | **390 px** |
+| jeitos de fechar a gaveta | **nenhum** | 3 (botão · ✕ · véu) |
+| presença das IAs no celular | invisível | 6 selos no topo |
+| trocar de tema | impossível | botão no trilho |
+
+### O teclado virtual
+
+`100dvh` responde às barras do navegador, **não ao teclado**: em iOS o layout não
+encolhe quando ele sobe, e o compositor fica atrás dele. A altura da moldura passou
+a ser `var(--altura-viva, 100dvh)`, alimentada por `visualViewport` — o único que
+enxerga o teclado. Provado o mecanismo: reduzindo a altura viva em 336 px (o teclado
+do iPhone), a moldura encolhe e o compositor fica **acima** da linha do teclado.
+Que o iOS dispare o evento é verificação de dispositivo, e está declarada abaixo.
+
+### Alvo de dedo
+
+Medido antes: pílulas 26 px, abas 37, ações de mensagem 19, selos 34 — **nenhum
+alcançava os 44 px** de Apple HIG / WCAG 2.5.8. Agora todos passam, por
+`min-height` e não por soma de padding: a altura do alvo é o contrato, não o
+resultado de uma conta que muda quando a fonte muda. O que cresce é a área — o
+texto e o filete continuam do mesmo tamanho, e o desktop não muda nada.
+
+No dedo não existe hover, então as ações da mensagem deixam de depender dele.
+
+### Os atalhos
+
+`⌘K`, `⌘J` e `⌘⇧L` não existem no celular. No lugar: a busca ocupa a linha inteira
+do cabeçalho (espremida com o título sobravam 98 px, só a lupa cabia), e painel e
+tema são os dois botões do trilho. O `⌘↵` sai do rótulo do botão de enviar.
+
+### Não verificável sem dispositivo
+
+- **O teclado virtual do iOS** disparando `visualViewport.resize`. O mecanismo está
+  provado; o evento do sistema, não.
+- **`env(safe-area-inset-*)`** com notch real: num emulador sem notch, todos valem
+  0 px. O CSS trata os quatro lados (o `left` faltava — landscape com notch à
+  esquerda) e o trilho respeita o topo, mas o valor só se prova num iPhone.
+- **Rolagem por inércia** e o comportamento do Safari ao arrastar nas bordas.
+
+### Um defeito de padrão que eu não consertei
+
+Os avatares da faixa de destino (`.destino-alvo`) têm 19×19 px. **Não são alvos de
+toque**: não têm ação, não recebem foco, são indicadores de quem vai ser notificado.
+WCAG 2.5.8 fala de alvos de ponteiro, e um indicador não é um. Aumentá-los seria
+engordar a faixa para satisfazer um número, sem ninguém do outro lado tentando
+tocá-los.
+
+---
+
 ## 11. Decisões conscientes de **não** fazer
 
 - **Sem virtualização de lista.** A sala rotaciona em 200 KB. Em vez de virtualizar, a mensagem
@@ -350,6 +425,9 @@ o dono é removido da lista de presença e nunca é alvo de "todas", mesmo estan
 | `07-copia-congelada-offline.png` | o export aberto **sem nenhuma API no ar** — estado *cópia congelada*, envio bloqueado |
 | `08-contraste-corrigido-palha.png` | depois da correção de contraste: a paleta e o destino nominado intactos |
 | `09-teclado-mensagem-escolhida.png` | navegação por teclado: a mensagem escolhida pelas setas, com as ações dela abertas |
+| `10-celular-antes.png` | **o defeito**: a gaveta cobrindo 86% do telefone, sem saída |
+| `11-celular-depois.png` | o mesmo telefone com a conversa inteira e o trilho deitado no topo |
+| `12-celular-gaveta.png` | a gaveta como folha, com o ✕ e o véu — relatório do dia legível no polegar |
 
 ---
 
@@ -359,6 +437,7 @@ o dono é removido da lista de presença e nunca é alvo de "todas", mesmo estan
 |---|---|
 | `testes/teste_contraste.py` | 97 pares de cor, nos dois temas, **compostos como o navegador compõe** — véu sobre superfície, não token contra token. Reprovou 39 vezes antes de passar. |
 | `testes/teste_cookie.py` | o cookie do token nasce `HttpOnly`, `SameSite=Strict`, `Path=/` — e continua autenticando. Guarda também o fato que torna `HttpOnly` grátis: o `sala.js` nunca lê `document.cookie`. |
+| `testes/teste_celular.py` | 36 invariantes do telefone: a saída da gaveta, o alvo de 44 px, a altura viva, as áreas seguras. Provado contra 5 mutações — inclusive uma que passou verde na primeira tentativa, porque o teste procurava uma string exata em vez de olhar a regra inteira. |
 | `testes/teste_a11y.py` | 41 invariantes de teclado, foco, ARIA e movimento reduzido. Não repete a medição de runtime (que está na §10): trava as condições sem as quais aquele comportamento deixa de existir. Provado contra 4 mutações — tirar o `tabindex` do log, devolver as 4 abas ao Tab, baixar o anel da busca para 10%, e fazer a mensagem nova recriar a lista: cada uma reprova. |
 
 Os dois nasceram vermelhos e passaram depois da correção — é o que os torna testes, e não

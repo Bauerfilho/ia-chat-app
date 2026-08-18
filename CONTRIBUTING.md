@@ -43,6 +43,46 @@ ocupada e reprova por um motivo que não tem nada a ver com o que ele testa.
 E, como no outro repositório: **`IACHAT_HOME` temporário sempre.** A sala real é dado de
 trabalho do dono e das IAs abertas naquele momento.
 
+## O CI roda o mesmo laço — e num Python que o seu talvez não seja
+
+`.github/workflows/testes.yml` faz exatamente o que está escrito acima: `montar.sh`,
+depois a bateria inteira, arquivo por arquivo. Nada de framework novo, nada de subconjunto.
+
+Ele roda em **macOS**, e não em Ubuntu, porque a bateria mede coisas que só existem aqui
+— `.icns` e `Info.plist` por `sips`/`iconutil`/`plutil`, e o rescaldo por `/usr/sbin/lsof`,
+que no Linux mora noutro lugar quando existe. Num runner Linux esses testes ficariam
+vermelhos por falta de ferramenta, ou se declarariam não-aplicáveis: as duas saídas são
+piores que não rodar. O arquivo do workflow traz a justificativa por extenso.
+
+Roda em **duas pernas de Python**, e a que costuma pegar defeito é a primeira:
+
+```bash
+# a perna `sistema` — o Python que já vem no Mac, e a promessa do projeto
+for f in testes/teste_*.py; do
+  /usr/bin/python3 "$f" >/dev/null 2>&1 && echo "✔ $(basename $f)" || echo "✗ $(basename $f)"
+done
+```
+
+Se você tem um Python moderno no `PATH` — e provavelmente tem —, um `match`, um
+`X | Y` fora de anotação ou um `tomllib` passa despercebido no seu terminal e quebra
+no Mac de quem clonar. **Rode a perna `sistema` antes de abrir PR**; é um comando, e é
+o que separa "passou aqui" de "passa lá".
+
+Duas coisas que o CI se recusa a fazer, e que valem saber:
+
+- **não fica verde sem rodar teste.** Se o glob não achar nada, ele reprova com a
+  mensagem dizendo isso. Verde de bateria vazia é a mentira mais barata que existe;
+- **não pula calado.** Um teste que se declara não-aplicável (`⊘`) aparece contado na
+  tabela do resumo e num aviso do job. Exclusão declarada é aceitável; invisível, não.
+
+**Sobre o badge:** o `README.md` ainda não tem um, de propósito. Badge só entra depois da
+primeira execução real, quando a URL existe e reflete um estado medido — badge apontando
+para workflow que nunca rodou é enfeite que mente. Depois do primeiro push, a linha é:
+
+```markdown
+[![testes](https://github.com/DONO/ia-chat-app/actions/workflows/testes.yml/badge.svg)](https://github.com/DONO/ia-chat-app/actions/workflows/testes.yml)
+```
+
 ## `montar.sh` é obrigatório — e não é zelo
 
 O `.app` é versionado **montado**, para que quem baixa não precise de `iconutil` nem de
@@ -132,7 +172,8 @@ armadilha do `montar.sh`.
 ## Antes de abrir o PR
 
 1. `bash montar.sh` rodado, se você tocou em `ui/` ou `marca/`.
-2. Bateria inteira verde (o laço lá em cima), não só o teste da sua peça.
+2. Bateria inteira verde (o laço lá em cima), não só o teste da sua peça — e verde
+   também com `/usr/bin/python3`, que é a perna do CI que pega o que o seu Python esconde.
 3. Nenhum servidor **seu** de pé. Confira pela **porta**, não pelo nome do processo:
    nesta máquina há servidores legítimos rodando o tempo todo (o app do dono, o de outro
    contribuidor), e `pgrep -f servir.py` acusa todos eles.
