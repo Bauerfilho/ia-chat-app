@@ -19,6 +19,35 @@ SRC="${IA_CHAT_SRC:-$HOME/Projetos/ia-chat}"
 
 [ -d "$APP" ] || { echo "✗ não achei $APP — rode este script de dentro do repo"; exit 1; }
 
+# ── `--atualizar`: trocar a interface de um app JÁ instalado, sem reinstalar ──
+# A instalação normal faz `rm -rf` no bundle antes de copiar. Isso é correto para
+# instalar, e errado quando o app está ABERTO: apaga o bundle debaixo do processo
+# vivo. E ficar desatualizado não é hipótese remota — aconteceu duas vezes em
+# 18/08: o app em /Applications era de horas antes e não tinha a interface nova,
+# enquanto o repositório já estava publicado. Quem abre por dois cliques via a
+# versão velha e não tem como saber.
+if [ "${1:-}" = "--atualizar" ]; then
+  DEST_DIR="${IA_CHAT_DEST:-/Applications}"
+  [ -d "$DEST_DIR" ] || DEST_DIR="$HOME/Applications"
+  ALVO="$DEST_DIR/ia-chat.app"
+  [ -d "$ALVO" ] || { echo "✗ $ALVO não está instalado — rode sem --atualizar"; exit 1; }
+  [ -d "$APP/Contents/Resources/ui" ] || { echo "✗ o bundle do repo não tem ui/ — rode ./montar.sh antes"; exit 1; }
+  n=0
+  for f in "$APP/Contents/Resources/ui"/*; do
+    [ -f "$f" ] || continue
+    base="$(basename "$f")"
+    destino="$ALVO/Contents/Resources/ui/$base"
+    if [ ! -f "$destino" ] || ! cmp -s "$f" "$destino"; then
+      cp "$f" "$destino" || { echo "✗ não consegui copiar $base para $ALVO" >&2; exit 1; }
+      echo "  → $base"
+      n=$((n+1))
+    fi
+  done
+  [ "$n" = 0 ] && echo "= já estava sincronizado" || echo "✔ $n arquivo(s) atualizado(s) em $ALVO"
+  echo "  (o binário e o Info.plist não foram tocados; reabra o app para ver)"
+  exit 0
+fi
+
 # ── 1. o original já está no disco? ──────────────────────────────────────────
 # A prova é o arquivo que o app realmente precisa importar, não a existência de
 # uma pasta com o nome certo. Pasta vazia clonada pela metade também tem nome.
