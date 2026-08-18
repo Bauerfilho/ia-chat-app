@@ -1141,14 +1141,23 @@ const estreito = () => matchMedia('(max-width:760px)').matches;
 function botoesGaveta(){
   return [$('#btn-gaveta'), $('#btn-gaveta-topo')].filter(Boolean);
 }
+/* Quem abriu é quem recebe o foco de volta. São dois botões para a mesma gaveta —
+   o do rodapé do trilho e o do topo — e devolver o foco a um deles fixo mandaria a
+   pessoa para o outro canto da tela. No celular é pior: o de baixo pode nem estar
+   visível quando a gaveta fecha. */
+let abriuAGaveta = null;
+function voltaOFoco(){
+  const alvo = (abriuAGaveta && document.contains(abriuAGaveta)) ? abriuAGaveta : $('#btn-gaveta');
+  if (alvo) alvo.focus();
+}
 function abreGaveta(forcar){
   const aberta = forcar !== undefined ? forcar : E.moldura.dataset.gaveta !== 'aberta';
   E.moldura.dataset.gaveta = aberta ? 'aberta' : 'fechada';
   botoesGaveta().forEach(b => b.setAttribute('aria-expanded', String(aberta)));
   if (aberta && estreito()) $('#gaveta-fecha').focus();
 }
-botoesGaveta().forEach(b => b.addEventListener('click', ()=> abreGaveta()));
-$('#gaveta-fecha').addEventListener('click', ()=>{ abreGaveta(false); $('#btn-gaveta').focus(); });
+botoesGaveta().forEach(b => b.addEventListener('click', ()=>{ abriuAGaveta = b; abreGaveta(); }));
+$('#gaveta-fecha').addEventListener('click', ()=>{ abreGaveta(false); voltaOFoco(); });
 E.veu.addEventListener('click', ()=> abreGaveta(false));
 E.sino.addEventListener('click', alternaSinoOperador);
 
@@ -1188,7 +1197,7 @@ document.addEventListener('keydown', ev=>{
     ev.preventDefault(); return;
   }
   if (ev.key === 'Escape' && estreito() && E.moldura.dataset.gaveta === 'aberta'){
-    ev.preventDefault(); abreGaveta(false); $('#btn-gaveta').focus(); return;
+    ev.preventDefault(); abreGaveta(false); voltaOFoco(); return;
   }
   if (ev.key === 'Escape' && document.activeElement === E.busca){
     E.busca.value = ''; S.filtro = ''; desenhaMsgs(); E.texto.focus();

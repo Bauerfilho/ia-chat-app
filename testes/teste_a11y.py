@@ -114,6 +114,27 @@ def main() -> int:
           ".sala-fio:focus-visible .msg--ativa" in CSS,
           "o foco fica no log; sem realce na mensagem, o teclado anda às cegas")
 
+    print("— a gaveta tem dois botões, e o foco volta para quem abriu —")
+    # Ele pediu o mesmo botão no canto superior. Dois controles para um painel só
+    # criam duas armadilhas: estado que diverge entre eles, e foco que volta sempre
+    # para o mesmo, mandando a pessoa para o outro canto da tela.
+    botoes = re.findall(r'id="(btn-gaveta[\w-]*)"[^>]*aria-controls="gaveta"', HTML)
+    checa("há mais de um botão controlando a gaveta", len(botoes) >= 2,
+          f"achei {len(botoes)}: {botoes} — o pedido dele era ter também no topo")
+    checa("o estado é escrito em TODOS eles de uma vez",
+          re.search(r"botoesGaveta\(\)\.forEach\([^)]*aria-expanded", JS) is not None,
+          "com um botão dizendo aberta e o outro fechada, o leitor de tela mente")
+    # Medido pelo mecanismo, não pela forma: a restauração é CENTRALIZADA. Fixar o id
+    # aqui reprovaria um terceiro botão legítimo amanhã; o que não pode é cada caminho
+    # de fechamento escolher um botão por conta própria.
+    fixos = re.findall(r"\$\('#btn-gaveta[\w-]*'\)\.focus\(\)", JS)
+    checa("nenhum caminho de fechamento devolve o foco a um botão fixo",
+          len(fixos) <= 1,
+          f"{len(fixos)} chamadas com id cravado — quem abriu pelo topo é jogado para o rodapé")
+    checa("o clique registra qual botão abriu",
+          re.search(r"botoesGaveta\(\)\.forEach\(b => b\.addEventListener\('click'.*?= b", JS) is not None,
+          "sem guardar quem abriu, não há para onde devolver o foco")
+
     print("— movimento —")
     bloco = re.search(r"@media \(prefers-reduced-motion:reduce\)\{(.*?)\n\}", CSS, re.S)
     checa("existe bloco de movimento reduzido", bool(bloco))
