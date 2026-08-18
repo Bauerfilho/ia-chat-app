@@ -142,7 +142,11 @@ function instalaModosJanela(){
 
   modos.addEventListener('click', ev=>{
     const b = ev.target.closest('[data-modo-janela]');
-    if (b) janelaModo(b.dataset.modoJanela);
+    if (!b) return;
+    janelaModo(b.dataset.modoJanela);
+    // voltaOFoco: quem trocou o modo recebe o foco de volta. janelaModo manda
+    // o compositor focar no desktop; sem isto o Tab some do seletor.
+    if (document.contains(b)) b.focus();
   });
 }
 
@@ -395,13 +399,13 @@ function gcBarraHTML(registro, compacto=false){
     ? `Contexto de ${registro.ia_id || 'IA'} ${c.leitura}`
     : `Contexto ${c.modo} de ${registro.ia_id || 'IA'}: ${c.leitura}`;
   const progresso = c.modo === 'desconhecido'
-    ? `<span class="gc-contexto-trilho" role="progressbar" aria-valuetext="${esc(c.leitura)}"></span>`
-    : `<span class="gc-contexto-trilho" role="progressbar" aria-valuemin="0" ` +
+    ? `<span class="gc-contexto-trilho" role="progressbar" aria-label="${esc(aria)}" aria-valuetext="${esc(c.leitura)}"></span>`
+    : `<span class="gc-contexto-trilho" role="progressbar" aria-label="${esc(aria)}" aria-valuemin="0" ` +
       `aria-valuemax="${c.janela}" aria-valuenow="${c.tokens}" ` +
       `aria-valuetext="${esc(c.leitura)}"><span class="gc-contexto-valor" ` +
       `style="--gc-valor:${c.percentual}%"></span></span>`;
   return `<div class="gc-contexto${compacto?' gc-contexto--compacto':''}" ` +
-    `data-modo="${c.modo}"${alto} aria-label="${esc(aria)}">` +
+    `data-modo="${c.modo}"${alto}>` +
     `<span class="gc-contexto-tipo">${tipo}</span>${progresso}` +
     `<span class="gc-contexto-leitura">${esc(c.leitura)}</span></div>`;
 }

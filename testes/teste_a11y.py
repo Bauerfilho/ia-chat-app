@@ -144,6 +144,39 @@ def main() -> int:
           re.search(r"botoesGaveta\(\)\.forEach\(b => b\.addEventListener\('click'.*?= b", JS) is not None,
           "sem guardar quem abriu, não há para onde devolver o foco")
 
+    print("— o groupchat entra no teclado —")
+    # Terceiro modo: o seletor e a ação dobrada não existiam quando este gate
+    # nasceu. Sem estas travas ele continua verde e o modo novo fica cego.
+    i_sel = JS.find("modos.addEventListener('click'")
+    seletor = JS[i_sel:i_sel + 520] if i_sel >= 0 else ""
+    checa("o seletor de três modos é um nav nomeado",
+          "className = 'janela-modos'" in JS and
+          "setAttribute('aria-label', 'Modo da janela')" in JS)
+    checa("os três modos nascem como botão nativo (Tab + Space/Enter)",
+          '<button type="button" class="janela-modo"' in JS and
+          "['sala','enxame','groupchat']" in JS)
+    checa("o modo ativo se anuncia com aria-pressed e aria-current",
+          "setAttribute('aria-pressed', String(ativo))" in JS and
+          "setAttribute('aria-current', 'page')" in JS)
+    checa("trocar de modo pelo seletor devolve o foco a quem clicou",
+          "janelaModo(b.dataset.modoJanela)" in seletor and "b.focus()" in seletor,
+          "senão janelaModo manda o compositor focar e o Tab some do seletor")
+    checa("voltaOFoco continua sendo a doutrina da gaveta",
+          "function voltaOFoco" in JS and "abriuAGaveta" in JS)
+    checa("a ação dobrada é details nativo com summary",
+          '<details class="gc-acao"' in JS and "<summary>" in JS)
+    detalhe = re.search(r'<details class="gc-acao"[^>]*>[\s\S]*?</details>', JS)
+    checa("o summary da ação não nasce fora do Tab",
+          bool(detalhe) and 'tabindex="-1"' not in detalhe.group(0),
+          "tabindex -1 no details tornaria Enter/Space inalcançáveis")
+    checa("a progressbar leva o nome com a IA e a ocupação",
+          'role="progressbar" aria-label="${esc(aria)}"' in JS and
+          "registro.ia_id" in JS[JS.find("function gcBarraHTML"):
+                                 JS.find("function gcBarraHTML") + 900],
+          "o nome tem que estar NO progressbar, não só no wrapper")
+    checa("o log do groupchat é região viva",
+          'id="groupchat-fio" role="log" aria-live="polite"' in JS)
+
     print("— movimento —")
     bloco = re.search(r"@media \(prefers-reduced-motion:reduce\)\{(.*?)\n\}", CSS, re.S)
     checa("existe bloco de movimento reduzido", bool(bloco))
@@ -153,6 +186,9 @@ def main() -> int:
         checa("o campo de luz e a aurora param",
               ".campo-mesh,.campo-aurora{animation:none}" in corpo,
               "são as duas que respiram sozinhas na tela")
+        checa("a barra medindo do groupchat para sob movimento reduzido",
+              ".gc-contexto[data-modo=\"desconhecido\"] .gc-contexto-trilho{animation:none}" in corpo,
+              "a regra geral não prova que o seletor do groupchat foi alcançado")
 
     print("— rótulos —")
     for bid, nome in (("btn-tema", "alternar tema"), ("btn-gaveta", "abrir o painel")):

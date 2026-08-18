@@ -459,6 +459,27 @@ def main() -> int:
     checa("comando e saída ficam no corpo recolhido",
           "gc-acao-corpo" in JS and "<h4>comando</h4>" in JS and "<h4>saída</h4>" in JS)
 
+    print("— teclado, foco e contraste —")
+    i_sel = JS.find("modos.addEventListener('click'")
+    seletor = JS[i_sel:i_sel + 520] if i_sel >= 0 else ""
+    checa("o seletor de modos é botão nativo, não link",
+          '<button type="button" class="janela-modo"' in JS)
+    checa("os três botões ficam no Tab (sem tabindex -1)",
+          "janela-modo" in JS and 'tabindex="-1"' not in trecho(
+              "function instalaModosJanela", "const GC ="))
+    checa("trocar de modo devolve o foco ao botão que clicou",
+          "janelaModo(b.dataset.modoJanela)" in seletor and "b.focus()" in seletor)
+    checa("voltaOFoco permanece a doutrina da gaveta",
+          "function voltaOFoco" in JS)
+    checa("a progressbar se nomeia com a IA, não só o percentual",
+          'role="progressbar" aria-label="${esc(aria)}"' in JS and
+          "registro.ia_id" in trecho("function gcBarraHTML", "function gcHora"))
+    checa("a barra medindo para sob prefers-reduced-motion",
+          ".gc-contexto[data-modo=\"desconhecido\"] .gc-contexto-trilho{animation:none}" in CSS)
+    checa("Falhou no carvão clareia o texto, nunca a lei --erro",
+          ':root[data-tema="carvao"] .gc-acao[data-estado="falhou"] .gc-acao-estado' in CSS
+          and "color-mix(in srgb,var(--erro) 82%,var(--palha-100))" in CSS)
+
     print(f"\n{_ok} ✔ / {_falhou} ✗")
     return 1 if _falhou else 0
 

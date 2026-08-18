@@ -79,6 +79,11 @@ def sobre(frente: tuple, tras: tuple) -> tuple:
     return (*(frente[i] * a + tras[i] * (1 - a) for i in range(3)), 1.0)
 
 
+def mistura(a: tuple, frac: float, b: tuple) -> tuple:
+    """color-mix(in srgb, a frac, b) com os dois lados opacos."""
+    return (*(a[i] * frac + b[i] * (1 - frac) for i in range(3)), 1.0)
+
+
 def lum(c: tuple) -> float:
     def canal(x: float) -> float:
         x /= 255
@@ -141,6 +146,29 @@ def pares_palha(t: dict, base: dict) -> list[tuple[str, str, tuple, float]]:
         ("botão Enviar", v("--carvao-900"), v("--ouro"), 4.5),
         ("comando na mensagem", v("--carvao-900"), v("--ouro"), 4.5),
     ]
+    # groupchat — o terceiro modo pinta selos e Falhou sobre superf-alta,
+    # e o nome da IA no cartão de sessão. Sem estes pares o gate passa
+    # verde sem olhar o modo novo.
+    alta = v("--palha-000")
+    pre_falhou = sobre((*v("--erro")[:3], 0.06), alta)
+    pre_alto = sobre((*v("--atencao")[:3], 0.07), alta)
+    for ia in IAS:
+        p.append((f"groupchat · nome {ia} no cartão", v(f"--{ia}-t"), alta, 4.5))
+    p += [
+        ("groupchat · selo exato", v("--info"), alta, 4.5),
+        ("groupchat · selo estimado", v("--atencao"), alta, 4.5),
+        ("groupchat · selo desconhecido", v("--tinta-3"), alta, 4.5),
+        ("groupchat · selo atenção", v("--atencao"), pre_alto, 4.5),
+        ("groupchat · Falhou", v("--erro"), pre_falhou, 4.5),
+        ("groupchat · Executando", v("--atencao"), alta, 4.5),
+        ("groupchat · Concluído", v("--ok"), alta, 4.5),
+        ("groupchat · título da ação", v("--tinta-2"), alta, 4.5),
+        ("groupchat · tipo da ação", v("--tinta-3"), alta, 4.5),
+        ("groupchat · h4 do details", v("--tinta-3"), alta, 4.5),
+        ("groupchat · texto do details", v("--palha-300"), carvao, 4.5),
+        ("groupchat · modo inativo", v("--tinta-3"), v("--palha-100"), 4.5),
+        ("groupchat · modo ativo", v("--ouro-claro"), carvao, 4.5),
+    ]
     return p
 
 
@@ -169,6 +197,28 @@ def pares_carvao(t: dict, base: dict) -> list[tuple[str, str, tuple, float]]:
          sobre(cor(resolve("--ouro-veu", t, base)), superf_alta), 4.5),
         ("paleta · a implementar", v("--atencao"),
          sobre(cor(resolve("--ouro-veu", t, base)), superf_alta), 4.5),
+    ]
+    pre_falhou = sobre((*v("--erro")[:3], 0.06), superf_alta)
+    pre_alto = sobre((*v("--atencao")[:3], 0.07), superf_alta)
+    # no carvão o texto de Falhou é --erro clareado com palha-100 (82/18);
+    # medir --erro cru sobre o véu 6% é o par que reprova (4.27).
+    tinta_falhou = mistura(v("--erro"), 0.82, cor(resolve("--palha-100", t, base)))
+    for ia in IAS:
+        p.append((f"groupchat · nome {ia} no cartão", v(f"--{ia}-t"), superf_alta, 4.5))
+    p += [
+        ("groupchat · selo exato", v("--info"), superf_alta, 4.5),
+        ("groupchat · selo estimado", v("--atencao"), superf_alta, 4.5),
+        ("groupchat · selo desconhecido", v("--tinta-3"), superf_alta, 4.5),
+        ("groupchat · selo atenção", v("--atencao"), pre_alto, 4.5),
+        ("groupchat · Falhou", tinta_falhou, pre_falhou, 4.5),
+        ("groupchat · Executando", v("--atencao"), superf_alta, 4.5),
+        ("groupchat · Concluído", v("--ok"), superf_alta, 4.5),
+        ("groupchat · título da ação", v("--tinta-2"), superf_alta, 4.5),
+        ("groupchat · tipo da ação", v("--tinta-3"), superf_alta, 4.5),
+        ("groupchat · h4 do details", v("--tinta-3"), superf_alta, 4.5),
+        ("groupchat · texto do details", v("--palha-300"), v("--carvao-800"), 4.5),
+        ("groupchat · modo inativo", v("--tinta-3"), v("--superf"), 4.5),
+        ("groupchat · modo ativo", v("--ouro-claro"), v("--carvao-800"), 4.5),
     ]
     return p
 
