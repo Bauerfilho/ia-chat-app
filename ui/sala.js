@@ -1198,7 +1198,16 @@ document.addEventListener('keydown', ev=>{
 /* ── arranque ────────────────────────────────────────────────────────────── */
 // no celular ela cobriria a conversa inteira; no desktop tem coluna própria
 abreGaveta(!matchMedia('(max-width:760px)').matches);
-try{ const t = localStorage.getItem('ia-chat-tema'); if (t) tema(t); }catch(e){}
+/* Tema: a URL manda, depois o que ficou guardado. `?tema=carvao` existe pelo mesmo
+   motivo do `?aba=` e do `?janela=` — endereço que abre como você quer é favoritável,
+   e no celular vira ícone na Tela de Início já no tema certo.
+   Só dois valores; qualquer outro é ignorado em vez de pintar a interface de nada. */
+try{
+  const pedido = new URLSearchParams(location.search).get('tema');
+  const guardado = localStorage.getItem('ia-chat-tema');
+  const t = ['palha', 'carvao'].includes(pedido) ? pedido : guardado;
+  if (t) tema(t);
+}catch(e){}
 if (window.CONGELADO){                       // export offline: a sala vem dentro do HTML
   const d = window.CONGELADO;
   S.msgs = d.msgs||[]; S.ultima = d.ultima||0; S.sala = d.sala||S.sala;
