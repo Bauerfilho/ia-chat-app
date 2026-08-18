@@ -19,12 +19,66 @@ PORTA="${IACHAT_PORTA_REMOTA:-8899}"
 LOG_SRV=/tmp/iachat-remoto-servidor.log
 LOG_TUN=/tmp/iachat-remoto-tunel.log
 LINK="${IACHAT_LINK_REMOTO:-$HOME/ia-chat-global/link-remoto.txt}"
+# Ponto fixo do celular: iCloud Drive/ia-chat/sala.html. Sobrescreva o caminho
+# com IACHAT_PONTE_CELULAR (os testes apontam para pasta temporária — a bateria
+# nunca escreve no iCloud real).
 INTERVALO="${IACHAT_VIGIA_S:-60}"
 TETO_QUEDAS="${IACHAT_VIGIA_TETO:-5}"
+PONTE_CELULAR_GRAVADA=""
 
 url_do_log() { grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' "$LOG_TUN" 2>/dev/null | tail -1; }
 token_do_log() { grep -oE '\?t=[A-Za-z0-9_-]+' "$LOG_SRV" 2>/dev/null | tail -1 | cut -d= -f2; }
 tunel_vivo() { pgrep -f "cloudflared tunnel --url http://127.0.0.1:$PORTA" >/dev/null 2>&1; }
+
+registra_link() {   # url token — deixa o endereço onde o celular acha sem ler log
+  # O túnel gratuito troca o hostname. O CAMINHO desta ponte não troca: o celular
+  # abre sempre o mesmo arquivo e é mandado para o endereço vivo. Sem isso, o
+  # aviso na sala é circular — a sala só se alcança pelo endereço que acabou de
+  # mudar.
+  [ -n "${1:-}" ] && [ -n "${2:-}" ] || return 0
+  local destino dir tmp tmp_txt txt url
+  url="$1/?t=$2"
+  printf '%s\n# gerado em %s\n' "$url" "$(date '+%Y-%m-%d %H:%M:%S')" > "$LINK"
+  chmod 600 "$LINK" 2>/dev/null || true
+
+  destino="${IACHAT_PONTE_CELULAR:-}"
+  if [ -z "$destino" ] && [ -d "$HOME/Library/Mobile Documents/com~apple~CloudDocs" ]; then
+    destino="$HOME/Library/Mobile Documents/com~apple~CloudDocs/ia-chat/sala.html"
+  fi
+  [ -n "$destino" ] || return 0
+  dir="$(dirname "$destino")"
+  mkdir -p "$dir" 2>/dev/null || return 0
+  tmp="$destino.tmp.$$"
+  cat > "$tmp" <<EOF || { rm -f "$tmp"; return 0; }
+<!DOCTYPE html>
+<html lang="pt-BR">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="refresh" content="0;url=$url">
+<title>ia-chat</title>
+<p style="font:20px/1.4 -apple-system,sans-serif;margin:2rem">
+<a href="$url">abrir a sala</a>
+</p>
+</html>
+EOF
+  chmod 600 "$tmp" 2>/dev/null || true
+  mv -f "$tmp" "$destino" 2>/dev/null || { rm -f "$tmp"; return 0; }
+  case "$destino" in
+    *.html)
+      txt="${destino%.html}.txt"
+      tmp_txt="$txt.tmp.$$"
+      if printf '%s\n' "$url" > "$tmp_txt" 2>/dev/null; then
+        chmod 600 "$tmp_txt" 2>/dev/null || true
+        mv -f "$tmp_txt" "$txt" 2>/dev/null || rm -f "$tmp_txt"
+      else
+        rm -f "$tmp_txt"
+      fi
+      ;;
+  esac
+  PONTE_CELULAR_GRAVADA="$destino"
+  return 0
+}
+
 responde() {   # url token — a prova é de FORA, pelo próprio túnel, não pelo pid
   #
   # ⚠️ O DNS DESTA MÁQUINA PODE ESTAR CEGO. Medido em 18/08: `dig` pelo 8.8.8.8 e pelo
@@ -54,10 +108,10 @@ responde() {   # url token — a prova é de FORA, pelo próprio túnel, não pe
 # Esta vigia ADOTA o que já está no ar — nunca derruba um túnel que responde,
 # porque derrubar para "consertar" trocaria o endereço que ele está usando.
 #
-# ⚠️ O que esta vigia NÃO resolve: quando o endereço MUDA, ele precisa descobrir
-# o novo, e o caminho para descobrir é a própria sala — que ele só alcança pelo
-# endereço. Endereço fixo exige túnel nomeado com conta Cloudflare; é decisão
-# dele, e está anotado aqui em vez de fingido.
+# Quando o endereço muda, a ponte (iCloud Drive/ia-chat/sala.html) é o ponto
+# fixo que o celular abre — o caminho não muda, só o conteúdo. A sala ainda
+# recebe o aviso (outro Mac / sessão que já estava aberta). Endereço fixo de
+# verdade exige túnel nomeado com conta Cloudflare; é decisão dele.
 if [ "${1:-}" = "--vigiar" ]; then
   command -v cloudflared >/dev/null || { echo "✗ cloudflared ausente" >&2; exit 1; }
   quedas=0
@@ -84,14 +138,21 @@ if [ "${1:-}" = "--vigiar" ]; then
       echo "[$(date '+%H:%M:%S')] não consegui levantar; próxima tentativa em ${espera}s"
       sleep "$espera"; continue
     fi
+    queda_n=$quedas                       # guarda ANTES de zerar: o post não pode dizer 0
     quedas=0                              # levantou: o contador zera
     nu="$(url_do_log)"; nt="$(token_do_log)"
+    registra_link "$nu" "$nt"
     if [ "$nu" != "$u" ] && [ -n "$nu" ]; then
       echo "[$(date '+%H:%M:%S')] ENDEREÇO NOVO: $nu/?t=$nt"
-      # a sala é o único canal que sobrevive à troca: quem abrir de qualquer
-      # outro lugar vê o endereço novo escrito lá.
-      printf '📱 O endereço do túnel mudou (queda %s). O novo é:\n\n%s/?t=%s\n' \
-        "$quedas" "$nu" "$nt" \
+      # a sala ainda é avisada: quem já estava nela (outro aparelho, LAN)
+      # vê o endereço novo. O celular na rua usa a ponte, não este post.
+      if [ -n "$PONTE_CELULAR_GRAVADA" ]; then
+        aviso_celular="No celular: Arquivos → iCloud Drive → ia-chat → sala.html"
+      else
+        aviso_celular="Ponte iCloud não gravada; link local: $LINK"
+      fi
+      printf '📱 O endereço do túnel mudou (queda %s). O novo é:\n\n%s/?t=%s\n\n%s\n' \
+        "$queda_n" "$nu" "$nt" "$aviso_celular" \
         | "${IACHAT_CLI:-$HOME/Projetos/ia-chat/bin/iachat}" post --de claude --para bauer 2>/dev/null \
         || echo "   (não consegui postar na sala — o link está em $LINK)"
     fi
@@ -156,10 +217,6 @@ done
 CODIGO="$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "$URL/?t=$TOKEN" || echo 000)"
 [ "$CODIGO" = "200" ] || { echo "✗ o túnel respondeu HTTP $CODIGO — não vou dizer que está pronto." >&2; exit 1; }
 
-registra_link() {   # url token — deixa o endereço onde dá para achar sem ler log
-  printf '%s/?t=%s\n' "$1" "$2" > "$LINK"
-  printf '# gerado em %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" >> "$LINK"
-}
 registra_link "$URL" "$TOKEN"
 
 echo
@@ -167,6 +224,14 @@ echo "📱  $URL/?t=$TOKEN"
 echo
 echo "    No iPhone: Safari → Compartilhar → Adicionar à Tela de Início."
 echo "    Vira ícone e abre em tela cheia."
+echo
+if [ -n "$PONTE_CELULAR_GRAVADA" ]; then
+  echo "    Se o endereço mudar (túnel gratuito cai e volta outro):"
+  echo "    iPhone → Arquivos → iCloud Drive → ia-chat → sala.html"
+  echo "    Esse caminho não muda. Só o conteúdo."
+else
+  echo "    ⚠ ponte móvel não criada; confira o iCloud Drive ou IACHAT_PONTE_CELULAR."
+fi
 echo
 echo "    O link também fica em: $LINK"
 echo "    Manter no ar:  $0 --vigiar   (ressuscita se cair)"

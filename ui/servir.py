@@ -154,6 +154,18 @@ IASWARM_RAIZ = Path(os.environ.get(
 RE_IASWARM_ID = re.compile(r"^[A-Za-z0-9._-]{1,80}$")
 TETO_LOG_IASWARM = 8192
 
+# — groupchat: mensagens da sala + snapshots da sessão de cada IA —————————
+# O log comum já chega por `msgs_desde`; ele NÃO mede contexto. A telemetria
+# vem de um sidecar JSONL separado, uma atualização por linha, exatamente no
+# contrato de `PROJETO-groupchat.md` §8. O caminho é fixo para o processo (ou
+# declarado no ambiente para o produtor da telemetria); nunca vem da query.
+# Ausência do sidecar é um estado válido: a API devolve `unknown`, não inventa
+# percentual com bytes da sala.
+GROUPCHAT_FONTE = Path(os.environ.get(
+    "IACHAT_GROUPCHAT", str(core.home() / "groupchat.jsonl")
+)).expanduser()
+TETO_GROUPCHAT_JSONL = 1024 * 1024
+
 # O favicon viaja DENTRO deste arquivo, em base64, e não como um arquivo ao lado.
 # Motivo medido, não estético: `montar.sh` copia para o bundle uma lista fixa de
 # quatro nomes (index.html, estilo.css, sala.js, servir.py). Um `favicon.ico`
@@ -308,6 +320,98 @@ def sala() -> dict:
         "brain": core.normaliza_ia(cfg.get("brain", "")),
         "notificar_operador": cfg.get("notificar_operador", False) is True,
         "escrever": CFG["escrever"], "papel": CFG["papel"],
+    }
+
+
+def _groupchat_atualizacoes() -> list[dict]:
+    """Lê a cauda do sidecar sem transformar sala em contexto.
+
+    A validação deliberadamente só garante a forma externa. O cliente aplica
+    de novo as regras numéricas antes de desenhar a barra; auditoria em duas
+    camadas evita que um produtor marque `exact` com numerador inválido.
+    """
+    if not GROUPCHAT_FONTE.is_file():
+        return []
+    try:
+        bruto = GROUPCHAT_FONTE.read_bytes()
+    except OSError:
+        return []
+    if len(bruto) > TETO_GROUPCHAT_JSONL:
+        bruto = bruto[-TETO_GROUPCHAT_JSONL:]
+        # A primeira linha pode ter começado antes do corte.
+        _, _, bruto = bruto.partition(b"\n")
+    saida: list[dict] = []
+    for linha in bruto.splitlines():
+        try:
+            item = json.loads(linha)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            continue
+        if not isinstance(item, dict):
+            continue
+        ia = core.normaliza_ia(str(item.get("ia_id") or ""))
+        contexto = item.get("context")
+        if not ia or not isinstance(contexto, dict):
+            continue
+        estado = contexto.get("state")
+        if estado not in ("exact", "estimated", "unknown"):
+            contexto = {**contexto, "state": "unknown",
+                        "reason": contexto.get("reason") or "invalid_state"}
+        # A sentinela é soberana mesmo se o produtor escrever `state: exact`.
+        if contexto.get("last_prompt_tokens") == -1:
+            contexto = {**contexto, "state": "unknown",
+                        "reason": "compacted_waiting_measurement"}
+        saida.append({
+            "ia_id": ia,
+            "session_id": str(item.get("session_id") or ""),
+            "model_id": str(item.get("model_id") or ""),
+            "message_n": item.get("message_n"),
+            "context": contexto,
+            "liveness": item.get("liveness")
+                if isinstance(item.get("liveness"), dict) else {},
+            # O adaptador de eventos estruturados pode anexar ações à mesma
+            # atualização. A etapa visual as dobra; texto bruto nunca vira HTML.
+            "actions": item.get("actions")
+                if isinstance(item.get("actions"), list) else [],
+        })
+    return saida
+
+
+def groupchat() -> dict:
+    """Snapshot legível pelo terceiro modo, sem nenhuma escrita no núcleo."""
+    mensagens = [m for m in msgs_desde(0) if m.get("de") != CFG["papel"]]
+    atualizacoes = _groupchat_atualizacoes()
+    ultimas: dict[str, dict] = {}
+    for item in atualizacoes:
+        ultimas[item["ia_id"]] = item
+
+    # IA ativa sem telemetria continua visível, explicitamente desconhecida.
+    ias = list(sala().get("na_sala") or [])
+    for m in mensagens:
+        ia = core.normaliza_ia(str(m.get("de") or ""))
+        if ia and ia not in ias:
+            ias.append(ia)
+    for ia in ias:
+        if ia == CFG["papel"] or ia in ultimas:
+            continue
+        ultimas[ia] = {
+            "ia_id": ia, "session_id": "", "model_id": "",
+            "context": {
+                "state": "unknown", "last_prompt_tokens": None,
+                "estimated_prompt_tokens": None,
+                "context_window_tokens": None,
+                "source": None, "sampled_at": None,
+                "reason": "telemetry_unavailable",
+            },
+            "liveness": {"last_signal_at": None,
+                         "session_state": "unknown"},
+            "actions": [],
+        }
+    return {
+        "fonte": str(GROUPCHAT_FONTE) if GROUPCHAT_FONTE.is_file()
+                 else "sem telemetria",
+        "sessions": list(ultimas.values()),
+        "snapshots": atualizacoes,
+        "msgs": mensagens,
     }
 
 
@@ -487,6 +591,8 @@ class Sala(BaseHTTPRequestHandler):
             return self._iaswarm(q)
         if u.path == "/api/iaswarm/remoto":
             return self._iaswarm_remoto(q)
+        if u.path == "/api/groupchat":
+            return self._json(groupchat())
         if u.path == "/api/mapa":
             return self._mapa()
         if u.path.count("/") == 1 and u.path[1:]:

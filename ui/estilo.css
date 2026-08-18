@@ -288,6 +288,16 @@ code,kbd,.num{font-family:var(--mono); font-variant-numeric:tabular-nums}
   border-radius:4px;padding:2px 5px;pointer-events:none}
 
 .cabeca-estado{flex-shrink:0;display:flex;align-items:center;gap:var(--u)}
+/* Os três destinos são estados da MESMA janela. Botões, e não links: a troca
+   não navega nem duplica a página. `aria-current` acompanha o state machine. */
+.janela-modos{display:flex;align-items:center;flex:none;padding:3px;
+  border:1px solid var(--borda);border-radius:var(--raio);background:var(--superf)}
+.janela-modo{border:0;background:transparent;cursor:pointer;padding:6px 9px;
+  border-radius:7px;color:var(--tinta-3);font-size:10.5px;letter-spacing:.05em;
+  transition:background-color var(--t-rapido) var(--ease),color var(--t-rapido) var(--ease)}
+.janela-modo:hover{color:var(--ouro-tinta)}
+.janela-modo[aria-current="page"]{background:var(--carvao-800);color:var(--ouro-claro);
+  box-shadow:0 4px 12px -7px rgba(16,14,10,.7)}
 /* o mesmo gesto da gaveta, no canto de cima: o trilho-btn nasceu no carvão,
    aqui ele vive sobre o papel e pede a tinta do cabeçalho */
 .cabeca .trilho-btn{color:var(--tinta-2);width:34px;height:34px;flex-shrink:0}
@@ -938,6 +948,141 @@ html[data-janela="enxame"] .enxame{display:block}
 .enxame-rodape{margin-top:14px;color:var(--tinta-3);font-size:10.5px;letter-spacing:.02em;line-height:1.7}
 .enxame-rodape b{color:var(--tinta-2)}
 
+/* ── GROUPCHAT · terceiro modo da moldura ─────────────────────────────────
+   O compositor continua sendo o mesmo da sala. Só o miolo troca: conversa
+   por sessão à esquerda, janelas das IAs à direita. */
+html[data-janela="groupchat"] .moldura{
+  grid-template-areas:"trilho cabeca gaveta" "trilho groupchat gaveta" "trilho comp gaveta"}
+html[data-janela="groupchat"] .sala,
+html[data-janela="groupchat"] .enxame{display:none}
+html[data-janela="groupchat"] .cabeca-busca{display:none}
+.groupchat{display:none;grid-area:groupchat;min-width:0;min-height:0;
+  grid-template-columns:minmax(0,1fr) 310px;overflow:hidden}
+.groupchat[hidden]{display:none!important}
+html[data-janela="groupchat"] .groupchat{display:grid}
+.groupchat-conversa{min-width:0;min-height:0;overflow:auto;overscroll-behavior:contain}
+.groupchat-fio{min-width:0;max-width:var(--leitura);margin:0 auto;
+  padding:var(--u3) var(--u4) var(--u4);display:flex;flex-direction:column;gap:22px}
+.groupchat-lateral{min-width:0;overflow:auto;padding:18px 16px var(--u3);
+  border-left:1px solid var(--borda);background:color-mix(in srgb,var(--superf) 88%,transparent)}
+.groupchat-lateral h2{font:400 18px/1.2 var(--serif);font-variant:small-caps;
+  letter-spacing:.03em;color:var(--tinta)}
+.groupchat-lateral>p{margin:4px 0 15px;color:var(--tinta-3);font-size:11.5px}
+
+/* A fala tem DUAS linhas de estado antes do texto. A primeira é identidade e
+   usa exclusivamente a cor da IA; a segunda é recurso e usa exclusivamente
+   a paleta semântica. Assim, roxo continua significando kimi mesmo quando a
+   sessão está quase cheia, e laranja continua significando atenção. */
+/* Linha 1: identidade. Só estes elementos recebem a cor da IA. */
+.gc-fala{--ia-t:var(--anonima-t);position:relative;min-width:0;padding:1px 0 0 var(--u3);
+  animation:chega var(--t-lento) var(--ease) backwards}
+.gc-fala::before{content:"";position:absolute;left:0;top:4px;bottom:2px;width:2px;
+  border-radius:2px;background:linear-gradient(to bottom,var(--ia-t),transparent 94%);opacity:.72}
+.gc-identidade{display:flex;align-items:baseline;gap:var(--u);min-width:0}
+.gc-identidade-ponto{width:7px;height:7px;border-radius:50%;flex:none;
+  background:var(--ia-t,var(--anonima-t));
+  box-shadow:0 0 0 3px color-mix(in srgb,var(--ia-t,var(--anonima-t)) 10%,transparent)}
+.gc-identidade strong{color:var(--ia-t,var(--anonima-t));font-size:13.5px;
+  letter-spacing:.015em}
+.gc-modelo{min-width:0;color:var(--tinta-3);font-size:10.5px;white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis}
+.gc-identidade time{margin-left:auto;color:var(--tinta-3);font:10.5px/1 var(--mono);
+  white-space:nowrap}
+
+/* Linha 2: estado. Nenhuma regra abaixo usa `--ia-t`; a cor aqui é semântica. */
+.gc-contexto{display:grid;grid-template-columns:auto minmax(96px,1fr) auto;
+  align-items:center;gap:9px;min-width:0;margin:7px 0 11px;padding:6px 9px;
+  border:1px solid var(--borda);border-radius:7px;background:var(--superf-alta)}
+.gc-contexto-tipo{color:var(--info);font:700 9px/1 var(--corpo);
+  letter-spacing:.12em;text-transform:uppercase;white-space:nowrap}
+.gc-contexto-trilho{position:relative;display:block;min-width:0;height:7px;
+  overflow:hidden;border:1px solid var(--borda);border-radius:4px;background:var(--palha-300)}
+:root[data-tema="carvao"] .gc-contexto-trilho{background:var(--carvao-600)}
+.gc-contexto-valor{display:block;width:var(--gc-valor,0%);height:100%;border-radius:inherit;
+  background:var(--info);transition:width var(--t-lento) var(--ease)}
+.gc-contexto-leitura{color:var(--tinta-2);font:600 10.5px/1 var(--mono);
+  white-space:nowrap;text-align:right}
+.gc-contexto[data-modo="estimado"]{border-style:dashed}
+.gc-contexto[data-modo="estimado"] .gc-contexto-tipo{color:var(--atencao)}
+.gc-contexto[data-modo="estimado"] .gc-contexto-valor{
+  background:repeating-linear-gradient(135deg,var(--atencao) 0 5px,
+    color-mix(in srgb,var(--atencao) 55%,transparent) 5px 9px)}
+.gc-contexto[data-modo="desconhecido"] .gc-contexto-tipo,
+.gc-contexto[data-modo="desconhecido"] .gc-contexto-leitura{color:var(--tinta-3)}
+.gc-contexto[data-modo="desconhecido"] .gc-contexto-trilho{
+  background:linear-gradient(90deg,var(--palha-300),var(--ouro-veu),var(--palha-300));
+  background-size:220% 100%;animation:gc-medindo 2.1s linear infinite}
+:root[data-tema="carvao"] .gc-contexto[data-modo="desconhecido"] .gc-contexto-trilho{
+  background:linear-gradient(90deg,var(--carvao-600),var(--ouro-veu),var(--carvao-600));
+  background-size:220% 100%}
+.gc-contexto[data-risco="alto"]{border-color:color-mix(in srgb,var(--atencao) 38%,transparent);
+  background:color-mix(in srgb,var(--atencao) 7%,var(--superf-alta))}
+.gc-contexto[data-risco="alto"] .gc-contexto-tipo,
+.gc-contexto[data-risco="alto"] .gc-contexto-leitura{color:var(--atencao)}
+.gc-contexto[data-risco="alto"] .gc-contexto-valor{background:var(--atencao)}
+@keyframes gc-medindo{to{background-position:-220% 0}}
+
+.gc-texto{min-width:0;color:var(--tinta);font-size:14.5px;line-height:1.72;
+  overflow-wrap:anywhere}
+.gc-texto p{margin:0 0 10px}.gc-texto p:last-child{margin-bottom:0}
+.gc-texto ul{margin:.3em 0 .8em;padding-left:1.15em}
+.gc-texto strong{color:var(--ouro-tinta);font-weight:600}
+.gc-texto code{padding:1px 5px;border:1px solid var(--ouro-fio);border-radius:4px;
+  background:var(--ouro-veu);color:var(--ouro-tinta);font-size:12px;white-space:normal}
+
+.gc-sessao{--ia-t:var(--anonima-t);min-width:0;margin-bottom:12px;padding:13px;border:1px solid var(--borda);
+  border-radius:var(--raio);background:var(--superf-alta)}
+.gc-sessao header{display:flex;align-items:center;gap:var(--u);min-width:0}
+.gc-sessao header strong{color:var(--ia-t,var(--anonima-t));font-size:12px}
+.gc-sessao>p{margin:5px 0 8px;color:var(--tinta-3);font:10.5px/1.5 var(--mono);
+  overflow-wrap:anywhere}
+.gc-vida{margin-left:auto;padding:3px 6px;border:1px solid currentColor;border-radius:5px;
+  font:700 9px/1 var(--corpo);letter-spacing:.08em;text-transform:uppercase}
+.gc-vida[data-estado="ok"]{color:var(--ok)}
+.gc-vida[data-estado="atencao"]{color:var(--atencao)}
+.gc-vida[data-estado="erro"]{color:var(--erro)}
+.gc-contexto--compacto{grid-template-columns:auto minmax(58px,1fr);margin:0;padding:7px}
+.gc-contexto--compacto .gc-contexto-leitura{grid-column:1/-1;text-align:left;margin-top:1px}
+.gc-estado-vazio{text-align:center;padding:24px 12px;color:var(--tinta-3)}
+.gc-estado-vazio>span{display:block;color:var(--ouro);font-size:23px;opacity:.58}
+.gc-estado-vazio h3{margin:6px 0 3px;font:400 16px/1.2 var(--serif);
+  font-variant:small-caps;color:var(--tinta-2)}
+.gc-estado-vazio p{font-size:10.5px}
+.groupchat-lateral>.gc-fonte{margin:-8px 0 14px;padding-bottom:9px;border-bottom:1px dashed var(--borda);
+  font:10px/1.5 var(--mono);overflow-wrap:anywhere}
+
+/* O ruído não some: uma linha humana fica sempre visível; comando e saída
+   permanecem atrás do disclosure nativo. Estado usa só a paleta semântica. */
+.gc-acoes{min-width:0;margin-top:13px;border:1px solid var(--borda);border-radius:var(--raio);
+  background:var(--superf-alta);overflow:hidden}
+.gc-acoes>h3{display:flex;align-items:center;gap:8px;margin:0;padding:9px 11px;
+  border-bottom:1px solid var(--borda);font:600 10.5px/1 var(--corpo);
+  letter-spacing:.08em;text-transform:uppercase;color:var(--tinta-2)}
+.gc-acoes>h3 .num{color:var(--ouro-tinta)}
+.gc-acao{min-width:0;border-bottom:1px solid var(--borda)}
+.gc-acao:last-child{border-bottom:0}
+.gc-acao summary{list-style:none;cursor:pointer;display:grid;min-width:0;
+  grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:10px;padding:9px 11px}
+.gc-acao summary::-webkit-details-marker{display:none}
+.gc-acao-estado{font:700 9.5px/1 var(--corpo);letter-spacing:.08em;text-transform:uppercase;
+  white-space:nowrap;color:var(--tinta-3)}
+.gc-acao[data-estado="rodando"] .gc-acao-estado{color:var(--atencao)}
+.gc-acao[data-estado="concluida"] .gc-acao-estado{color:var(--ok)}
+.gc-acao[data-estado="pendente"] .gc-acao-estado{color:var(--atencao)}
+.gc-acao[data-estado="falhou"] .gc-acao-estado{color:var(--erro)}
+.gc-acao[data-estado="falhou"]{background:color-mix(in srgb,var(--erro) 6%,transparent)}
+.gc-acao-titulo{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  font-size:12px;color:var(--tinta-2)}
+.gc-acao-tipo{font:600 9px/1 var(--mono);color:var(--tinta-3);padding:3px 6px;
+  border:1px solid var(--borda);border-radius:4px;white-space:nowrap}
+.gc-acao-corpo{min-width:0;padding:0 11px 11px;border-top:1px dashed var(--borda)}
+.gc-acao-corpo h4{margin:9px 0 4px;font:700 8.5px/1 var(--corpo);letter-spacing:.12em;
+  text-transform:uppercase;color:var(--tinta-3)}
+.gc-acao-corpo pre{min-width:0;max-width:100%;margin:0;padding:9px 10px;border-radius:7px;
+  background:var(--carvao-800);color:var(--palha-300);overflow:auto;
+  white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word}
+.gc-acao-corpo code{font:10.5px/1.52 var(--mono)}
+
 /* modo neon — o outro modo de visualizar, no mesmo palco, mesmas funções */
 html[data-enxame-modo="neon"] .enxame-malha{
   background-image:
@@ -1066,6 +1211,20 @@ html[data-enxame-modo="neon"] .enxame-term{background:#03060a}
   html[data-janela="enxame"] .moldura{
     grid-template-areas:"trilho trilho trilho" "cabeca cabeca cabeca"
                         "enxame enxame enxame" "enxame enxame enxame"}
+  html[data-janela="groupchat"] .moldura{
+    grid-template-areas:"trilho trilho trilho" "cabeca cabeca cabeca"
+                        "groupchat groupchat groupchat" "comp comp comp"}
+  .janela-modos{grid-row:3;grid-column:1/-1;width:100%}
+  .janela-modo{flex:1;text-align:center;min-width:0}
+  html[data-janela="groupchat"] .janela-modos{grid-row:2}
+  html[data-janela="groupchat"] .groupchat{display:block;overflow:auto;min-width:0}
+  .groupchat-conversa{overflow:visible;min-width:0}
+  .groupchat-fio{padding:var(--u3) var(--u2)}
+  .groupchat-lateral{border-left:0;border-top:1px solid var(--borda);min-width:0}
+  .gc-identidade{align-items:flex-start;flex-wrap:wrap}
+  .gc-modelo{order:3;flex-basis:100%;padding-left:15px}
+  .gc-contexto{grid-template-columns:auto minmax(64px,1fr)}
+  .gc-contexto-leitura{grid-column:1/-1;text-align:left}
   .enxame-folha{padding:var(--u2)}
   .enxame-w-cab{grid-template-columns:15px 1fr auto;row-gap:6px}
   .enxame-tempo{display:none}
@@ -1106,7 +1265,8 @@ html[data-enxame-modo="neon"] .enxame-term{background:#03060a}
   .campo-mesh,.campo-aurora{animation:none}
   .enxame-malha,.enxame-agg .i-viv,.enxame-seg.ativo,.enxame-term::after,
   #enxame.estreia .enxame-reator,#enxame.estreia .enxame-seg.feito,
-  .enxame-w.avancou .enxame-seg.feito{animation:none}
+  .enxame-w.avancou .enxame-seg.feito,
+  .gc-contexto[data-modo="desconhecido"] .gc-contexto-trilho{animation:none}
 }
 
 /* ── mapa de retomada ─────────────────────────────────────────────────────

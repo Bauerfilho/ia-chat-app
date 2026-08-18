@@ -8,6 +8,7 @@
    GET  /api/quem          -> presença (allowlist de leitura)
    GET  /api/iaswarm       -> {fonte, raiz, vivo, runs[]}
    GET  /api/iaswarm/remoto-> {eventos, log, resultado}  (leitura, um worker)
+   GET  /api/groupchat     -> {sessions, snapshots, msgs}
    POST /api/post          -> {de, texto, para[]}
    POST /api/sino          -> {notificar_operador}
    POST /api/<goal|plan|concluir|parar|refaz|decidi>
@@ -100,6 +101,57 @@ const S = {
   sala:{na_sala:[],escrever:false,papel:DONO,notificar_operador:false},
   naSala:[], sinos:{}, colado:true, novas:0, filtro:'', fio:null, fonte:null,
   ativa:null, sinoMudando:false, // a troca não concorre com a sincronização
+};
+
+/* ── três modos, um só chassi ─────────────────────────────────────────────
+   `index.html` continua sendo a casa única. O terceiro modo entra como um
+   filho da mesma `.moldura`, usa o mesmo cabeçalho e o mesmo compositor; não
+   nasce uma página paralela. O seletor é montado aqui porque a fronteira desta
+   fase não inclui o HTML, e fica visível também no celular. */
+const JANELAS = new Set(['sala','enxame','groupchat']);
+
+function instalaModosJanela(){
+  const cabeca = $('.cabeca');
+  if (!cabeca || $('#groupchat')) return;
+
+  const modos = document.createElement('nav');
+  modos.className = 'janela-modos';
+  modos.setAttribute('aria-label', 'Modo da janela');
+  modos.innerHTML = ['sala','enxame','groupchat'].map(modo =>
+    `<button type="button" class="janela-modo" data-modo-janela="${modo}" ` +
+    `aria-pressed="${modo === 'sala'}">${modo}</button>`).join('');
+  cabeca.insertBefore(modos, $('.cabeca-busca'));
+
+  const groupchat = document.createElement('section');
+  groupchat.className = 'groupchat';
+  groupchat.id = 'groupchat';
+  groupchat.hidden = true;
+  groupchat.setAttribute('aria-label', 'Groupchat das sessões independentes');
+  groupchat.innerHTML = `
+    <main class="groupchat-conversa" id="groupchat-conversa" aria-label="Conversa entre as IAs">
+      <div class="groupchat-fio" id="groupchat-fio" role="log" aria-live="polite"
+           aria-relevant="additions"></div>
+    </main>
+    <aside class="groupchat-lateral" aria-label="Estado das sessões">
+      <h2>Janelas das IAs</h2>
+      <p>Ocupação da sessão atual. Nunca soma a sala.</p>
+      <p class="gc-fonte" id="groupchat-fonte">telemetria: aguardando</p>
+      <div id="groupchat-sessoes"></div>
+    </aside>`;
+  E.moldura.append(groupchat);
+
+  modos.addEventListener('click', ev=>{
+    const b = ev.target.closest('[data-modo-janela]');
+    if (b) janelaModo(b.dataset.modoJanela);
+  });
+}
+
+instalaModosJanela();
+
+const GC = {
+  raiz:$('#groupchat'), conversa:$('#groupchat-conversa'), fio:$('#groupchat-fio'),
+  sessoes:$('#groupchat-sessoes'), fonte:$('#groupchat-fonte'),
+  snapshots:[], sessions:[], msgs:[], ocupado:false, timer:null,
 };
 
 /* ── utilidades ──────────────────────────────────────────────────────────── */
@@ -273,6 +325,204 @@ function anexaMsg(m){
   E.vazio.hidden = true;
 }
 
+/* ── groupchat: uma fala, duas linhas, uma sessão própria ─────────────────
+   A linha 1 responde QUEM falou. A linha 2 responde COMO está a janela dessa
+   sessão. O tamanho da sala (`m.bytes`, contador, peso) não participa de
+   nenhuma conta abaixo — são grandezas diferentes. */
+function gcNumeroPositivo(v){
+  return typeof v === 'number' && Number.isFinite(v) && v > 0;
+}
+function gcTokens(v){
+  if (!gcNumeroPositivo(v)) return '—';
+  if (v >= 1000000) return (v/1000000).toFixed(v%1000000?1:0).replace('.',',') + 'M';
+  if (v >= 1000) return Math.round(v/1000) + 'k';
+  return String(Math.round(v));
+}
+function gcContexto(registro){
+  const c = registro && registro.context && typeof registro.context === 'object'
+    ? registro.context : {};
+  const janela = c.context_window_tokens;
+  const compactou = c.last_prompt_tokens === -1 ||
+    c.reason === 'compacted_waiting_measurement';
+  if (compactou) return {modo:'desconhecido', medindo:true, leitura:'medindo após compactação'};
+
+  let tokens = null, modo = 'desconhecido';
+  if (c.state === 'exact' && gcNumeroPositivo(c.last_prompt_tokens)){
+    tokens = c.last_prompt_tokens; modo = 'exato';
+  } else if (c.state === 'estimated' && gcNumeroPositivo(c.estimated_prompt_tokens)){
+    tokens = c.estimated_prompt_tokens; modo = 'estimado';
+  }
+  if (modo === 'desconhecido' || !gcNumeroPositivo(janela))
+    return {modo:'desconhecido', medindo:false, leitura:'contexto desconhecido'};
+
+  const percentualReal = Math.max(0, Math.round(tokens / janela * 100));
+  const percentual = Math.min(100, percentualReal);
+  const aprox = modo === 'estimado' ? '≈' : '';
+  return {
+    modo, tokens, janela, percentual, percentualReal,
+    risco: percentualReal >= 85 ? 'alto' : 'normal',
+    leitura:`${aprox}${percentualReal}% · ${gcTokens(tokens)}/${gcTokens(janela)}`,
+  };
+}
+function gcDesconhecido(ia){
+  return {ia_id:ia,session_id:'',model_id:'',context:{state:'unknown'},
+    liveness:{session_state:'unknown'},actions:[]};
+}
+function gcRegistroDaFala(m){
+  const candidatos = GC.snapshots.filter(x => x && x.ia_id === m.de);
+  const porNumero = candidatos.find(x => Number(x.message_n) === Number(m.n));
+  if (porNumero) return porNumero;
+  const instante = new Date(m.ts).getTime();
+  let melhor = null, melhorTs = -Infinity;
+  for (const item of candidatos){
+    const ts = new Date((item.context||{}).sampled_at).getTime();
+    // A telemetria da resposta pode ser gravada poucos segundos depois da
+    // mensagem. Nunca usa um snapshot arbitrariamente futuro.
+    if (Number.isFinite(ts) && ts <= instante + 30000 && ts > melhorTs){
+      melhor = item; melhorTs = ts;
+    }
+  }
+  if (melhor) return melhor;
+  if (candidatos.length === 1) return candidatos[0];
+  return GC.sessions.find(x => x && x.ia_id === m.de) || gcDesconhecido(m.de);
+}
+function gcBarraHTML(registro, compacto=false){
+  const c = gcContexto(registro);
+  const alto = c.risco === 'alto' ? ' data-risco="alto"' : '';
+  const tipo = c.modo === 'estimado' ? 'estimado' :
+    c.modo === 'exato' ? (c.risco === 'alto' ? 'exato · atenção' : 'exato') : 'desconhecido';
+  const aria = c.modo === 'desconhecido'
+    ? `Contexto de ${registro.ia_id || 'IA'} ${c.leitura}`
+    : `Contexto ${c.modo} de ${registro.ia_id || 'IA'}: ${c.leitura}`;
+  const progresso = c.modo === 'desconhecido'
+    ? `<span class="gc-contexto-trilho" role="progressbar" aria-valuetext="${esc(c.leitura)}"></span>`
+    : `<span class="gc-contexto-trilho" role="progressbar" aria-valuemin="0" ` +
+      `aria-valuemax="${c.janela}" aria-valuenow="${c.tokens}" ` +
+      `aria-valuetext="${esc(c.leitura)}"><span class="gc-contexto-valor" ` +
+      `style="--gc-valor:${c.percentual}%"></span></span>`;
+  return `<div class="gc-contexto${compacto?' gc-contexto--compacto':''}" ` +
+    `data-modo="${c.modo}"${alto} aria-label="${esc(aria)}">` +
+    `<span class="gc-contexto-tipo">${tipo}</span>${progresso}` +
+    `<span class="gc-contexto-leitura">${esc(c.leitura)}</span></div>`;
+}
+function gcHora(ts){
+  const d = new Date(ts);
+  return Number.isFinite(d.getTime()) ? fmtHora.format(d) : '—';
+}
+function gcEstadoAcao(valor){
+  const v = String(valor||'').toLowerCase();
+  if (['running','executing','executando','rodando','in_progress'].includes(v))
+    return {chave:'rodando',rotulo:'Executando'};
+  if (['completed','complete','success','succeeded','concluido','concluída','concluida'].includes(v))
+    return {chave:'concluida',rotulo:'Concluído'};
+  if (['failed','failure','error','erro','falhou'].includes(v))
+    return {chave:'falhou',rotulo:'Falhou'};
+  if (['pending','queued','fila','pendente'].includes(v))
+    return {chave:'pendente',rotulo:'Pendente'};
+  return {chave:'desconhecido',rotulo:'Estado desconhecido'};
+}
+function gcTextoAcao(v){
+  if (Array.isArray(v)) return v.map(x=>String(x)).join(' ');
+  if (v && typeof v === 'object') return JSON.stringify(v, null, 2);
+  return String(v == null ? '' : v);
+}
+function gcAcoesHTML(registro){
+  const acoes = registro && Array.isArray(registro.actions) ? registro.actions : [];
+  if (!acoes.length) return '';
+  const linhas = acoes.map((acao,i)=>{
+    const a = acao && typeof acao === 'object'
+      ? acao : {description_pt:gcTextoAcao(acao)};
+    const estado = gcEstadoAcao(a.state || a.estado || a.status);
+    const descricao = a.description_pt || a.descricao || a.description || a.title ||
+      `Ação de terminal ${i+1}`;
+    const tipo = a.type || a.tipo || a.tool || a.tool_name || 'Terminal';
+    const comando = gcTextoAcao(a.command != null ? a.command : a.comando);
+    const saida = gcTextoAcao(a.output != null ? a.output :
+      (a.saida != null ? a.saida : (a.stderr != null ? a.stderr : a.stdout)));
+    const corpo = `<div class="gc-acao-corpo">
+      <h4>comando</h4><pre><code>${esc(comando || 'não reportado')}</code></pre>
+      <h4>saída</h4><pre><code>${esc(saida || 'não reportada')}</code></pre>
+    </div>`;
+    return `<details class="gc-acao" data-estado="${estado.chave}">
+      <summary><span class="gc-acao-estado">${estado.rotulo}</span>
+        <span class="gc-acao-titulo">${esc(descricao)}</span>
+        <span class="gc-acao-tipo">${esc(tipo)}</span></summary>${corpo}</details>`;
+  }).join('');
+  return `<section class="gc-acoes" aria-label="Ações de terminal desta resposta">
+    <h3>Ações <span class="num">${acoes.length}</span></h3>${linhas}</section>`;
+}
+function gcFalaHTML(m){
+  const registro = gcRegistroDaFala(m);
+  const ia = corDe(m.de);
+  const modelo = registro.model_id || 'modelo não informado';
+  const sessao = registro.session_id || 'sessão não informada';
+  return `<article class="gc-fala" style="--ia-t:var(--${ia}-t)" data-msg="${Number(m.n)||0}">
+    <header class="gc-identidade">
+      <span class="gc-identidade-ponto" aria-hidden="true"></span>
+      <strong>${esc(m.de)}</strong>
+      <span class="gc-modelo">${esc(modelo)} · ${esc(sessao)}</span>
+      <time datetime="${esc(m.ts||'')}">${gcHora(m.ts)}</time>
+    </header>
+    ${gcBarraHTML(registro)}
+    <div class="gc-texto">${corpoHTML(m.texto||'')}</div>
+    ${gcAcoesHTML(registro)}
+  </article>`;
+}
+function gcVivacidade(registro){
+  const vivo = registro && registro.liveness || {};
+  const ts = vivo.last_signal_at;
+  const idade = ts ? (Date.now() - new Date(ts).getTime())/1000 : Infinity;
+  if (vivo.session_state === 'error' || vivo.session_state === 'dead')
+    return {estado:'erro',rotulo:'sem sinal'};
+  if (idade <= 90) return {estado:'ok',rotulo:'fresco'};
+  if (idade <= 300) return {estado:'atencao',rotulo:'lento'};
+  return {estado:'erro',rotulo:ts ? 'sem sinal' : 'desconhecido'};
+}
+function gcRenderSessoes(){
+  if (!GC.sessoes) return;
+  GC.sessoes.innerHTML = GC.sessions.length ? GC.sessions.map(registro=>{
+    const ia = corDe(registro.ia_id), vida = gcVivacidade(registro);
+    return `<section class="gc-sessao" style="--ia-t:var(--${ia}-t)">
+      <header><span class="gc-identidade-ponto" aria-hidden="true"></span>
+        <strong>${esc(registro.ia_id)}</strong>
+        <span class="gc-vida" data-estado="${vida.estado}">${vida.rotulo}</span></header>
+      <p>${esc(registro.model_id||'modelo não informado')} · ${esc(registro.session_id||'sessão não informada')}</p>
+      ${gcBarraHTML(registro, true)}
+    </section>`;
+  }).join('') : `<section class="gc-estado-vazio"><span aria-hidden="true">◇</span>
+    <h3>Nenhuma IA ativa</h3><p>As sessões aparecem quando entram na sala.</p></section>`;
+}
+function gcRender(){
+  if (!GC.fio) return;
+  const msgs = (GC.msgs.length ? GC.msgs : S.msgs.filter(m=>m.de !== S.sala.papel)).slice(-80);
+  GC.fio.innerHTML = msgs.length ? msgs.map(gcFalaHTML).join('') :
+    `<section class="gc-estado-vazio"><span aria-hidden="true">◇</span>
+      <h3>O groupchat está em silêncio</h3><p>Sem @, o compositor abaixo envia a todas as IAs ativas.</p></section>`;
+  gcRenderSessoes();
+}
+async function gcCarregar(){
+  const r = await fetch(url('/api/groupchat'), {cache:'no-store'});
+  if (!r.ok) throw new Error('HTTP '+r.status);
+  const d = await r.json();
+  GC.snapshots = Array.isArray(d.snapshots) ? d.snapshots : [];
+  GC.sessions = Array.isArray(d.sessions) ? d.sessions : [];
+  GC.msgs = Array.isArray(d.msgs) ? d.msgs : [];
+  if (GC.fonte) GC.fonte.textContent = 'telemetria: ' + (d.fonte || 'desconhecida');
+}
+async function gcTick(){
+  if (GC.ocupado || !GC.raiz) return;
+  GC.ocupado = true;
+  try{ await gcCarregar(); }
+  catch(e){
+    GC.msgs = S.msgs.filter(m=>m.de !== S.sala.papel);
+    GC.sessions = S.naSala.map(gcDesconhecido);
+    GC.snapshots = [];
+    if (GC.fonte) GC.fonte.textContent = 'telemetria: indisponível';
+  } finally {
+    gcRender(); GC.ocupado = false;
+  }
+}
+
 function desenhaPresenca(){
   E.presenca.innerHTML = '';
   S.naSala.forEach(ia=>{
@@ -427,7 +677,9 @@ function atualizaDestino(){
   E.destino.dataset.modo = todas ? 'todas' : 'nominada';
   if (todas){
     E.destino.style.removeProperty('--alvo');
-    E.destinoTxt.innerHTML = 'isto vai para <b>todas</b> as IAs da sala';
+    E.destinoTxt.innerHTML = document.documentElement.dataset.janela === 'groupchat'
+      ? 'sem <code>@</code>: isto vai para <b>todas as IAs ativas</b>'
+      : 'isto vai para <b>todas</b> as IAs da sala';
     E.enviarRot.textContent = 'Enviar a Todas';
   } else {
     E.destino.style.setProperty('--alvo', `var(--${corDe(alvos[0])}-t)`);
@@ -1295,7 +1547,7 @@ if (window.CONGELADO){                       // export offline: a sala vem dentr
 ajustaAltura();
 // foco inicial: desktop, campo primário único — é onde a mão dele já está
 // só no ponteiro fino: no celular, focar sozinho abre o teclado e come metade da tela
-if (matchMedia('(pointer:fine)').matches && !/[?&]janela=enxame/.test(location.search)) E.texto.focus();
+if (matchMedia('(pointer:fine)').matches && !/[?&]janela=(?:enxame|groupchat)/.test(location.search)) E.texto.focus();
 
 /* ═══════════════════════════════════════════════════════════════════════════
    IASWARM · janela dourada — mesma leitura do painel neon, outro humor.
@@ -1461,25 +1713,59 @@ try { EX_DOBRADOS = new Set(JSON.parse(localStorage.getItem(EX_DOBRA_CHAVE)||'[]
 function exGravarDobra(){ try{ localStorage.setItem(EX_DOBRA_CHAVE, JSON.stringify([...EX_DOBRADOS])); }catch(e){} }
 const EX_ABRIR_URL = new Set();
 
-function janelaEnxame(abrir){
-  const on = abrir !== undefined ? abrir : document.documentElement.dataset.janela !== 'enxame';
-  document.documentElement.dataset.janela = on ? 'enxame' : 'sala';
+function janelaModo(pedido){
+  const modo = JANELAS.has(pedido) ? pedido : 'sala';
+  const anterior = document.documentElement.dataset.janela || 'sala';
+  document.documentElement.dataset.janela = modo;
+
+  const enxame = $('#enxame'), groupchat = $('#groupchat');
+  if (enxame) enxame.hidden = modo !== 'enxame';
+  if (groupchat) groupchat.hidden = modo !== 'groupchat';
   const btn = $('#btn-enxame');
-  if (btn) btn.setAttribute('aria-pressed', String(on));
-  const caixa = $('#enxame');
-  if (caixa) caixa.hidden = !on;
+  if (btn) btn.setAttribute('aria-pressed', String(modo === 'enxame'));
+  $$('.janela-modo').forEach(b=>{
+    const ativo = b.dataset.modoJanela === modo;
+    b.setAttribute('aria-pressed', String(ativo));
+    if (ativo) b.setAttribute('aria-current', 'page');
+    else b.removeAttribute('aria-current');
+  });
+
   const tit = $('.cabeca-titulo'), sub = $('.cabeca-sub');
-  if (on){
-    if (tit){ tit.dataset.sala = tit.dataset.sala || tit.innerHTML; tit.textContent = 'IASWARM'; }
+  if (tit) tit.dataset.sala = tit.dataset.sala || tit.innerHTML;
+  if (modo === 'enxame'){
+    if (tit) tit.textContent = 'IASWARM';
     exTick();
     if (!EX.timer) EX.timer = setInterval(()=>{
       if (document.documentElement.dataset.janela === 'enxame' && document.visibilityState === 'visible') exTick();
     }, 2000);
+  } else if (modo === 'groupchat'){
+    if (tit) tit.textContent = 'groupchat';
+    gcTick();
+    if (!GC.timer) GC.timer = setInterval(()=>{
+      if (document.documentElement.dataset.janela === 'groupchat' &&
+          document.visibilityState === 'visible') gcTick();
+    }, 2000);
   } else {
     if (tit && tit.dataset.sala) tit.innerHTML = tit.dataset.sala;
-    if (EX.timer){ clearInterval(EX.timer); EX.timer = null; }
   }
-  if (!on && matchMedia('(pointer:fine)').matches) E.texto.focus();
+  if (anterior === 'enxame' && modo !== 'enxame' && EX.timer){
+    clearInterval(EX.timer); EX.timer = null;
+  }
+  if (anterior === 'groupchat' && modo !== 'groupchat' && GC.timer){
+    clearInterval(GC.timer); GC.timer = null;
+  }
+  if (modo !== 'enxame' && matchMedia('(pointer:fine)').matches) E.texto.focus();
+  atualizaDestino();
+  return modo;
+}
+
+function janelaEnxame(abrir){
+  const on = abrir !== undefined ? abrir : document.documentElement.dataset.janela !== 'enxame';
+  return janelaModo(on ? 'enxame' : 'sala');
+}
+function janelaGroupchat(abrir){
+  const on = abrir !== undefined ? abrir : document.documentElement.dataset.janela !== 'groupchat';
+  return janelaModo(on ? 'groupchat' : 'sala');
 }
 function fechaRemotoEnxame(){
   if (!EX.remoto || EX.remoto.hidden) return false;
@@ -1966,12 +2252,15 @@ if (EX.raiz){
       if (id) EX_ABRIR_URL.add(id);
     }
   }
-  if (swarm || abrir || remoto || /[?&]janela=enxame/.test(location.search)) {
-    janelaEnxame(true);
+  const pedidoJanela = q.get('janela');
+  if (swarm || abrir || remoto || pedidoJanela === 'enxame') {
+    janelaModo('enxame');
     if (remoto && remoto.includes('/')) {
       const [rid, wid] = remoto.split('/');
       setTimeout(()=> abreRemoto(rid, wid), 600);
     }
+  } else {
+    janelaModo(pedidoJanela === 'groupchat' ? 'groupchat' : 'sala');
   }
 }
 
