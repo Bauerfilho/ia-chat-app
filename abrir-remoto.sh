@@ -26,8 +26,26 @@ url_do_log() { grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' "$LOG_TUN" 2>/d
 token_do_log() { grep -oE '\?t=[A-Za-z0-9_-]+' "$LOG_SRV" 2>/dev/null | tail -1 | cut -d= -f2; }
 tunel_vivo() { pgrep -f "cloudflared tunnel --url http://127.0.0.1:$PORTA" >/dev/null 2>&1; }
 responde() {   # url token — a prova é de FORA, pelo próprio túnel, não pelo pid
+  #
+  # ⚠️ O DNS DESTA MÁQUINA PODE ESTAR CEGO. Medido em 18/08: `dig` pelo 8.8.8.8 e pelo
+  # 1.1.1.1 resolviam `*.trycloudflare.com`, e o resolvedor do sistema devolvia VAZIO. O
+  # `curl` usa o do sistema, então esta função dizia "fora do ar" sobre um túnel que
+  # respondia 200 para o mundo — e a vigia entrou em ciclo tentando consertar o que não
+  # estava quebrado. Eu quase reportei "o Cloudflare caiu".
+  #
+  # Então: tenta pelo caminho normal e, se falhar, RESOLVE por um DNS público e conecta
+  # pelo IP com `--resolve`. Só declara queda quando as DUAS rotas falham.
   [ -n "${1:-}" ] && [ -n "${2:-}" ] || return 1
-  [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "$1/?t=$2" 2>/dev/null)" = "200" ]
+  local host code ip
+  host="${1#https://}"; host="${host%%/*}"
+  code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "$1/?t=$2" 2>/dev/null)"
+  [ "$code" = "200" ] && return 0
+  for ip in $(dig +short +time=5 @1.1.1.1 "$host" 2>/dev/null | head -2); do
+    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 \
+            --resolve "$host:443:$ip" "https://$host/?t=$2" 2>/dev/null)"
+    [ "$code" = "200" ] && return 0
+  done
+  return 1
 }
 
 # ── vigiar ──────────────────────────────────────────────────────────────────

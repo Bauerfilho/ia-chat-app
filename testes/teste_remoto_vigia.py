@@ -76,6 +76,22 @@ def main() -> int:
           "tunel_vivo" not in vigia or "responde" in vigia,
           "se ela decidir por pgrep, um túnel zumbi passa por saudável")
 
+    print("— a prova não pode depender do DNS desta máquina —")
+    # 18/08: o resolvedor do sistema devolvia VAZIO para *.trycloudflare.com enquanto
+    # 8.8.8.8 e 1.1.1.1 resolviam. O curl usa o do sistema, então a prova dizia "fora do
+    # ar" sobre um túnel que respondia 200 para o mundo — e a vigia entrou em ciclo
+    # tentando consertar o que não estava quebrado.
+    resp = TEXTO[TEXTO.index("responde()"):TEXTO.index("responde()") + 1400]
+    checa("a prova tem rota alternativa por IP",
+          "--resolve" in resp,
+          "sem isso, DNS local cego = falso 'fora do ar'")
+    checa("resolve por DNS público quando o do sistema falha",
+          "@1.1.1.1" in resp or "@8.8.8.8" in resp,
+          "o resolvedor do sistema não pode ser a única fonte")
+    checa("só declara queda quando as DUAS rotas falham",
+          resp.count("return 0") >= 2 and "return 1" in resp,
+          "uma rota falhando não é prova de queda")
+
     print("— a vigia tem freio: sem ele, o remédio mata o paciente —")
     # 18/08: a vigia rodou 6 vezes em 6 minutos. Como cada tentativa MATA o servidor para
     # subir outro, ela derrubava um servidor bom a cada volta, e o dono não conseguia
