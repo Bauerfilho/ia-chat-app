@@ -1067,7 +1067,13 @@ E.descer.addEventListener('click', ()=> desce());
    disco a cada 2 s por um arquivo que passa horas parado. */
 let mapaCarregado = false;
 
-function tituloOuBloco(bloco){
+function tituloOuBloco(bruto){
+  // `.trim()` antes de testar: o YAML removido deixa um `\n` na frente do primeiro
+  // bloco, e `^#` não casava — o título do documento aparecia com o `#` cru na tela
+  // enquanto `## Onde parou` virava seção. Achado olhando a captura, não o código:
+  // o defeito era invisível na leitura e óbvio na imagem.
+  const bloco = bruto.trim();
+  if (!bloco) return '';
   const m = bloco.match(/^(#{1,3})\s+(.*)$/);
   if (!m) return corpoHTML(bloco);
   // Nível 1 é o título do próprio documento e já está no cabeçalho do painel —
@@ -1731,5 +1737,18 @@ if (/[?&]janela=enxame/.test(location.search)) {
   if (remoto && remoto.includes('/')) {
     const [rid, wid] = remoto.split('/');
     setTimeout(()=> abreRemoto(rid, wid), 600);
+  }
+}
+
+/* `?aba=mapa` abre a gaveta já na aba pedida. Existe pelo mesmo motivo do
+   `?janela=enxame`: quem quer voltar direto a uma seção não deveria precisar de dois
+   cliques toda vez — e um endereço que abre onde interessa é favoritável, inclusive na
+   Tela de Início do celular. A allowlist é o próprio DOM: só abre aba que existe, então
+   `?aba=qualquer-coisa` não faz nada em vez de quebrar. */
+{
+  const alvo = new URLSearchParams(location.search).get('aba');
+  if (alvo && $('#aba-' + alvo)) {
+    abreGaveta(true);
+    abreAba(alvo);
   }
 }
