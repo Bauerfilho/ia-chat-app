@@ -42,9 +42,18 @@ def main() -> int:
           "sem tabindex no #fio, as setas não têm onde acontecer")
     checa("o log continua sendo região viva",
           bool(fio) and 'role="log"' in fio.group(0) and 'aria-live="polite"' in fio.group(0))
-    checa("as ações da mensagem nascem fora do Tab",
-          JS.count('class="msg-acao" tabindex="-1"') == 3,
-          "três botões por mensagem × N mensagens era o pedágio até o campo de escrita")
+    # Proporção, não contagem: a regra é TODA ação nascer com tabindex="-1" —
+    # verdade para 3 ações ou para 7. O `== 3` anterior reprovava a quarta ação
+    # legítima (copiar, abrir fio); um `>= 3` aprovaria a quarta nascida DENTRO
+    # do Tab, que é o defeito real. O que se mede é o conjunto inteiro.
+    acoes = re.findall(r'<[a-z]+[^>]*\bclass="[^"]*\bmsg-acao\b[^"]*"[^>]*>', JS)
+    acoes += re.findall(r"className\s*=\s*'[^']*\bmsg-acao\b[^']*'[^;\n]*", JS)
+    fora = [a for a in acoes
+            if 'tabindex="-1"' in a or re.search(r"\btabIndex\s*=\s*-1", a)]
+    checa("as ações da mensagem nascem fora do Tab (todas, em qualquer número)",
+          bool(acoes) and len(fora) == len(acoes),
+          f"{len(acoes) - len(fora)} de {len(acoes)} ações sem tabindex -1 — "
+          "cada uma dentro do Tab é um pedágio a mais até o campo de escrita")
     checa("cada mensagem tem id (alvo do aria-activedescendant)",
           "art.id = 'msg-' + m.n" in JS)
     checa("o log aponta a mensagem escolhida",

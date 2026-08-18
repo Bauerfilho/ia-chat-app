@@ -173,10 +173,18 @@ def main() -> int:
 
     print("— trava 1: a allowlist é fechada e o argv é constante —")
     bloco = fonte[fonte.index("COMANDOS_POST"):fonte.index("EXIGEM_CONFIRMACAO")]
-    permitidos = sorted(re.findall(r'"(\w+)":\s*\(', bloco))
-    checa("COMANDOS_POST tem exatamente os seis comandos",
-          permitidos == sorted(["goal", "plan", "concluir", "parar", "refaz", "decidi"]),
-          str(permitidos))
+    # Subconjunto — a mesma solução que o lado JS já tomou em `esperados <= nomes`
+    # (trava 2): o conjunto EXATO reprova o sétimo comando POST nascido inteiro
+    # (CLI + UI + servidor), crescimento legítimo e não defeito. O contrato é
+    # duplo: os seis conhecidos continuam na allowlist, e a allowlist continua
+    # FECHADA — o que quem prova são os gates ao lado (sem shell=True, argv de
+    # constantes) e os REPROVA vivos (rota fora da lista → 404, chave
+    # contrabandeada → 409), não a contagem de nomes.
+    permitidos = set(re.findall(r'"(\w+)":\s*\(', bloco))
+    conhecidos = {"goal", "plan", "concluir", "parar", "refaz", "decidi"}
+    checa("os seis comandos conhecidos continuam na allowlist COMANDOS_POST",
+          conhecidos <= permitidos,
+          f"faltam {sorted(conhecidos - permitidos)} · na allowlist: {sorted(permitidos)}")
     checa("`quem` continua na allowlist de LEITURA, sozinho",
           re.search(r'COMANDOS_HTTP[^}]*"quem"', fonte) is not None)
     checa("sem shell=True em todo o servidor", "shell=True" not in fonte)

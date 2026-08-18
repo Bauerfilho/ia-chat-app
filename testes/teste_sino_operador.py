@@ -456,20 +456,28 @@ def main() -> int:
                 p1.stdout + p1.stderr,
             )
 
-            liga = subprocess.run(
-                [str(PYTHON), str(CORE_BIN / "iachat"), "sino", "on"],
-                env=env_daemon, capture_output=True, text=True,
-                timeout=10, check=False,
-            )
+            # O estado LIGADO é escrito direto na config, sem passar pelo CLI.
+            # O que este bloco prova é o DAEMON: com o sino ligado, a nominação
+            # vira notificação do macOS. Passar pelo `iachat sino on` acoplava a
+            # prova a um contrato que mudou em 18/08 — hoje o CLI se recusa a
+            # gravar `true` sem daemon instalado para AQUELA sala, e é o certo:
+            # um sino que se diz ligado e não toca é pior que um desligado. Esse
+            # contrato do CLI tem gate próprio, no repo do núcleo
+            # (`tests/teste_sino.py`), onde ele mora.
+            cfg = le_config(sala_daemon)
+            cfg["notificar_operador"] = True
+            (sala_daemon / "config.json").write_text(
+                json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
             p2 = posta_temporario(env_daemon, "on toca @bauer")
             tocou = espera_texto(log_osa, "mensagem #2")
             chamada_on = log_osa.read_text(encoding="utf-8") if log_osa.exists() else ""
             checa(
                 "ON entrega a nominação ao comando de notificação macOS",
-                liga.returncode == 0 and p2.returncode == 0 and tocou
+                le_config(sala_daemon).get("notificar_operador") is True
+                and p2.returncode == 0 and tocou
                 and "codex → bauer" in chamada_on
                 and "display notification" in chamada_on,
-                f"liga={liga.stdout!r} chamada={chamada_on!r}",
+                f"chamada={chamada_on!r}",
             )
 
             desliga = subprocess.run(

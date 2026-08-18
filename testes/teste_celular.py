@@ -92,9 +92,21 @@ def main() -> int:
           "aberta por padrão no celular = 86% da tela coberta ao abrir o app")
 
     print("— o teclado virtual —")
-    checa("a altura da moldura é variável",
-          "height:var(--altura-viva,100dvh)" in CSS,
-          "`dvh` responde às barras do navegador, não ao teclado")
+    # O mecanismo tem duas metades: a moldura é dirigida pela variável que o
+    # visualViewport alimenta (provado abaixo), e o fallback dela é uma unidade
+    # de viewport DINÂMICA — `dvh`, `svh` ou `lvh` respondem às barras do
+    # navegador; `vh` ou px não. O literal `100dvh` era a forma, não a regra.
+    m_moldura = re.search(r"\.moldura\{([^}]*)\}", CSS)
+    altura_moldura = ""
+    if m_moldura:
+        h = re.search(r"height:([^;}]+)", m_moldura.group(1))
+        altura_moldura = h.group(1).strip() if h else ""
+    checa("a moldura segue o viewport dinâmico (variável do visualViewport, "
+          "fallback em dvh/svh/lvh)",
+          re.search(r"var\(--altura-viva\s*,\s*100(?:dvh|svh|lvh)\)",
+                    altura_moldura) is not None,
+          f"moldura height: {altura_moldura or 'sem regra'} — sem a variável o "
+          "teclado não ajusta; sem dvh/svh/lvh as barras não ajustam")
     checa("quem alimenta a altura é o visualViewport",
           "visualViewport" in JS and "--altura-viva" in JS)
     checa("o app reage ao viewport mudar",
@@ -102,12 +114,16 @@ def main() -> int:
 
     print("— alvo de dedo —")
     checa("existe o bloco de ponteiro grosso", bool(dedo))
+    # O contrato é o PISO de 44 px, não a lista `44|48`: `56px` é a HIG indo
+    # além do mínimo — melhoria legítima que a lista reprovava. O que se mede
+    # é o valor, qualquer que seja a propriedade de altura usada.
     for alvo in (".pilula-cmd", ".aba", ".trilho-btn", ".msg-acao", ".enviar", ".selo"):
         regra = re.search(re.escape(alvo) + r"\{([^}]*)\}", dedo)
-        tem = bool(regra) and ("min-height:44px" in regra.group(1)
-                               or "height:44px" in regra.group(1)
-                               or "min-height:48px" in regra.group(1))
-        checa(f"{alvo} tem 44 px de alvo", tem, regra.group(1) if regra else "sem regra")
+        corpo = regra.group(1) if regra else ""
+        alturas = [int(v) for v in re.findall(r"(?:min-)?height:\s*(\d+)px", corpo)]
+        checa(f"{alvo} tem alvo de dedo ≥ 44 px",
+              bool(regra) and any(v >= 44 for v in alturas),
+              corpo or "sem regra")
     checa("as ações da mensagem aparecem sem hover",
           ".msg-pe{opacity:1" in dedo,
           "no dedo não existe hover: escondê-las ali é escondê-las para sempre")
@@ -119,7 +135,20 @@ def main() -> int:
     checa("o pé do compositor quebra", ".caixa-pe{flex-wrap:wrap" in estreito,
           "o botão Enviar cobria a pílula @nominar")
     checa("o atalho ⌘↵ some do botão", ".enviar kbd{display:none}" in estreito)
-    checa("as abas param antes do ✕", ".gaveta-abas{padding-right:52px}" in estreito)
+    # A colisão é o defeito; o `52px` era a fotografia dela. O que se mede: a
+    # folga à direita das abas cobre a largura do ✕ — que no ponteiro grosso
+    # cresce para 44px. ✕ maior com folga maior é melhoria (HIG), não defeito.
+    regra_abas = re.search(r"\.gaveta-abas\{([^}]*)\}", estreito)
+    folga = 0
+    if regra_abas:
+        mfolga = re.search(r"(?:padding|margin)-right:(\d+)px", regra_abas.group(1))
+        folga = int(mfolga.group(1)) if mfolga else 0
+    larguras_x = [int(v) for v in
+                  re.findall(r"\.gaveta-fecha\{[^}]*?width:(\d+)px", CSS)]
+    checa("as abas param antes do ✕ (folga ≥ largura dele)",
+          bool(regra_abas) and bool(larguras_x) and folga >= max(larguras_x),
+          f"folga {folga}px × ✕ {max(larguras_x) if larguras_x else '?'}px — "
+          "sem folga suficiente o ✕ cobre a última aba")
 
     print("— áreas seguras (notch e barra inferior) —")
     for lado in ("right", "bottom", "left"):

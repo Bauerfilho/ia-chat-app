@@ -81,6 +81,30 @@ def regra_da_ui(js: str) -> re.Pattern | None:
     return re.compile(padrao, re.I)
 
 
+def ramo_vazio(js: str, painel: str) -> str | None:
+    """O texto que o painel escreve quando não há dado — None se fica em branco.
+
+    A copy exata de cada empty state era a FORMA; o mecanismo é: no ramo de
+    dados vazios, o painel escreve um texto visível que nomeia o vazio. Reescrever
+    a frase é melhoria legítima; sumir com o ramo (ou escrever string vazia) é o
+    defeito. A função é localizada pela referência ao `#id` do painel, e o ramo
+    pelo `innerHTML` condicional — `cond ? '' : 'texto'` ou `cond ? 'texto' : ''`.
+    """
+    i = js.find(f"$('#{painel}')")
+    if i < 0:
+        return None
+    ini = js.rfind("function ", 0, i)
+    if ini < 0:
+        return None
+    fim = js.find("\nfunction ", i)
+    corpo = js[ini:fim if fim > 0 else len(js)]
+    for a, b in re.findall(r"innerHTML\s*=\s*[^?;]+?\?\s*'([^']*)'\s*:\s*'([^']*)'", corpo):
+        texto = re.sub(r"<[^>]+>", "", a or b).strip()
+        if texto:
+            return texto
+    return None
+
+
 FIXTURE = """Abertura da mensagem, sem marcador nenhum.
 
 DECIDIDO: o cursor não vira por-sessão.
@@ -145,15 +169,15 @@ def main() -> int:
         )
 
     # ── G4 · painel vazio precisa DIZER que está vazio ────────────────────
-    for alvo, agulha in (
-        ("#decisoes", "Nada marcado ainda"),
-        ("#linha", "Nada aconteceu hoje ainda"),
-        ("#reservas", "Nenhum arquivo citado"),
-    ):
+    # A copy exata era a forma; o mecanismo é o ramo de vazio existir e escrever
+    # texto visível. A frase pode ser reescrita (melhoria legítima); o que não
+    # pode é o painel ficar em branco fingindo que "ninguém decidiu nada ainda".
+    for painel in ("decisoes", "linha", "reservas"):
+        texto = ramo_vazio(js, painel)
         checa(
-            f"o painel {alvo} nomeia o próprio estado vazio",
-            agulha in js,
-            f"nenhum texto de estado vazio para {alvo}",
+            f"o painel #{painel} nomeia o próprio estado vazio",
+            texto is not None and len(texto) >= 8,
+            f"ramo de vazio achado: {texto!r} — sem texto o painel fica em branco",
         )
     checa(
         "o painel do fio explica que espera um clique",
