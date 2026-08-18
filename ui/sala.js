@@ -154,6 +154,24 @@ function corpoHTML(txt){
   // caminho de verdade: precisa de uma segunda barra ou de extensão
   h = h.replace(/(^|[\s(])(~?\/[\w.~-]+(?:\/[\w.~-]+)+\/?|~?\/[\w~-]+\.\w{2,4})/g,
     '$1<span class="caminho">$2</span>');
+  /* Endereço vira link. Ele lê o mapa de retomada no celular, e a linha do painel
+     (`painel — ` seguido do endereço local) era texto morto: dá para ver e não dá
+     para ir. Só `http`/`https` — nada de `javascript:` ou `data:`, que é onde mora
+     o abuso — e `noopener` porque a aba nova não tem por que alcançar esta. O texto
+     já passou por `esc()` lá em cima, então o que casa aqui é a forma escapada.
+     ⚠️ Sem endereço literal neste comentário: o gate de offline procura o esquema no
+     arquivo inteiro e não distingue comentário de código. Ele está certo — a
+     disciplina é minha. */
+  h = h.replace(/\bhttps?:\/\/[^\s<>"')\]]+/g, u => {
+    const limpo = u.replace(/[.,;:]+$/, '');          // pontuação final é da frase
+    const resto = u.slice(limpo.length);
+    return `<a href="${limpo}" target="_blank" rel="noopener noreferrer">${limpo}</a>${resto}`;
+  });
+  // Wikilink do Obsidian: ele pediu o documento "na versão renderizada do Obsidian",
+  // e `[[nome]]` é a marca dela. Vira rótulo legível — sem virar link para lugar
+  // nenhum, porque o vault não é servido por aqui e um link que não abre mente.
+  h = h.replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g,
+    (_, alvo, rotulo) => `<span class="wikilink">${(rotulo || alvo).trim()}</span>`);
   h = h.replace(/(^|\s)@(all|todas)\b/gi, '$1<span class="mencao mencao--todas">@todas</span>');
   h = h.replace(/(^|\s)@([a-z0-9_-]{2,20})\b/gi,
     // as DUAS variantes: `-t` para o papel palha, viva para o cartão do dono (carvão)
@@ -162,6 +180,9 @@ function corpoHTML(txt){
 
   return h.split(/\n{2,}/).map(bloco=>{
     const linhas = bloco.split('\n');
+    // `---` sozinho é régua, não parágrafo. O mapa de retomada usa uma antes do
+    // fecho e ela aparecia como três hifens soltos no meio do texto.
+    if (/^\s*-{3,}\s*$/.test(bloco)) return '<hr class="regua">';
     if (linhas.every(l => /^\s*[-*·]\s+/.test(l) || !l.trim()))
       return '<ul>' + linhas.filter(l=>l.trim()).map(l=>`<li>${l.replace(/^\s*[-*·]\s+/,'')}</li>`).join('') + '</ul>';
     return '<p>' + linhas.join('<br>') + '</p>';
