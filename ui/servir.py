@@ -17,6 +17,7 @@ esta pasta — nenhuma lógica de protocolo vive aqui.
 from __future__ import annotations
 
 import argparse
+import gzip
 import json
 import mimetypes
 import os
@@ -310,6 +311,33 @@ def sala() -> dict:
     }
 
 
+# ── compressão ───────────────────────────────────────────────────────────────
+# Ele lê a sala no celular, por um túnel, em rede móvel. Medido em 18/08: a
+# interface pesava 183 KB de texto e o servidor não comprimia nada — 53 KB com
+# gzip, 71% a menos. É a diferença entre abrir e esperar, e não custa nada.
+#
+# ⚠️ O SSE (`text/event-stream`) NUNCA passa por aqui, e não é descuido: o gzip
+# guarda bytes num buffer até fechar o bloco, e um stream comprimido entrega a
+# mensagem quando o buffer enche — não quando ela chega. A sala ao vivo pararia
+# de ser ao vivo, e o defeito seria invisível até alguém reclamar de atraso.
+MIN_GZIP = 1024              # abaixo disto o cabeçalho custa mais que a economia
+TIPOS_GZIP = ("text/", "application/json", "application/javascript",
+              "image/svg+xml", "application/manifest+json")
+
+
+def _talvez_comprime(corpo: bytes, tipo: str, aceita: str) -> tuple[bytes, str]:
+    """(corpo, encoding) — comprime só o que vale a pena e só se pedirem."""
+    if "gzip" not in aceita.lower():
+        return corpo, ""
+    if len(corpo) < MIN_GZIP:
+        return corpo, ""
+    if tipo.startswith("text/event-stream"):
+        return corpo, ""          # ao vivo não se enfileira em buffer
+    if not any(tipo.startswith(t) for t in TIPOS_GZIP):
+        return corpo, ""          # png/ico já vêm comprimidos; regzipar só gasta CPU
+    return gzip.compress(corpo, 6), "gzip"
+
+
 class Sala(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     server_version = "iachat-ui/0.1"
@@ -319,8 +347,16 @@ class Sala(BaseHTTPRequestHandler):
 
     def _json(self, obj, code=200):
         corpo = json.dumps(obj, ensure_ascii=False).encode()
+        # A sala inteira sai por aqui, e é o maior recurso da página: 71 KB de
+        # JSON contra 95 KB de JS. Texto de conversa comprime muito — deixá-lo
+        # de fora seria consertar metade do problema.
+        corpo, encoding = _talvez_comprime(
+            corpo, "application/json", self.headers.get("Accept-Encoding", ""))
         self.send_response(code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
+        if encoding:
+            self.send_header("Content-Encoding", encoding)
+            self.send_header("Vary", "Accept-Encoding")
         self.send_header("Content-Length", str(len(corpo)))
         self.end_headers()
         self.wfile.write(corpo)
@@ -397,7 +433,11 @@ class Sala(BaseHTTPRequestHandler):
                 f"iachat_t={CFG['token']}; Path=/; SameSite=Strict; HttpOnly; "
                 "Max-Age=86400",
             )
+        corpo, encoding = _talvez_comprime(corpo, tipo, self.headers.get("Accept-Encoding", ""))
         self.send_header("Content-Type", f"{tipo}; charset=utf-8")
+        if encoding:
+            self.send_header("Content-Encoding", encoding)
+            self.send_header("Vary", "Accept-Encoding")
         self.send_header("Content-Length", str(len(corpo)))
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
