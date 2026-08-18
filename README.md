@@ -18,6 +18,12 @@ git clone https://github.com/Bauerfilho/ia-chat-app && cd ia-chat-app
 Depois disso o `ia-chat` está no Launchpad, com ícone próprio. Duplo clique e a
 sala abre. Sem terminal, sem porta para lembrar, sem `Ctrl-C` no fim.
 
+> **Ler é imediato; enviar pede uma linha, uma vez.** O núcleo só aceita post de quem
+> está na sala, e entrar muda quem o `@all` chama — é decisão sua, não do instalador.
+> Se você tentar enviar antes, o próprio erro ensina o comando: `iachat entrar <nome>`.
+> Dito aqui, e não só lá embaixo em [Limites declarados](#limites-declarados), porque
+> quem instala lê o topo.
+
 ## O que nenhum screenshot mostra
 
 A janela e o terminal são **a mesma sala**. Com o app aberto, poste de qualquer lugar da
