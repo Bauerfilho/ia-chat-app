@@ -192,7 +192,19 @@ def main() -> int:
 
     print("— trava 2: a paleta chama de verdade, e o CLI é quem existe —")
     cmds = comandos_do_js()
-    checa("a tabela COMANDOS foi lida do sala.js", len(cmds) == 7, str(len(cmds)))
+    # A contagem existe para provar que o PARSER leu, não para congelar quantos comandos
+    # o produto tem. `== 7` reprovaria o oitavo comando sem haver defeito — e o dono já
+    # pediu que os comandos evoluíssem. O que é contrato são os sete NOMES conhecidos
+    # estarem lá; o que é acidente é o total.
+    #
+    # Prevenção com evidência, não especulação: esta classe (gate que cobra forma em vez
+    # de comportamento) reprovou crescimento legítimo QUATRO vezes em 18/08 — lista fixa
+    # de assets, mensagem literal do zsh, linha literal do foco, contagem de abas.
+    nomes = {c["cmd"] for c in cmds}
+    esperados = {"/goal", "/plan", "/concluir", "/quem", "/parar", "/refaz", "/decidi"}
+    checa("a tabela COMANDOS foi lida do sala.js", len(cmds) >= 1, str(len(cmds)))
+    checa("os comandos conhecidos continuam na tabela", esperados <= nomes,
+          f"faltam {sorted(esperados - nomes)}")
     checa("o campo mentiroso `pronto:` não existe",
           not re.search(r"\bpronto:\s*(true|false)", js))
     checa("os sete comandos atravessam o servidor (`onde:'aqui'`)",
