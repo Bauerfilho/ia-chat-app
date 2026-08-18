@@ -1781,8 +1781,10 @@ async function abreRemoto(runId, workerId){
         <div>
           <h3 class="enxame-det-h">terminal <i>cauda de ${TETO_VISIVEL_LOG()}</i></h3>
           <div class="enxame-term" role="log" aria-label="cauda do log">${term}</div>
-          <p class="enxame-det-rodape">Isto é leitura. Digitar no terminal da IA, matar o processo ou redisparar
-            não atravessa o app — a doutrina é a mesma do <code>/parar</code>: destruição fica no CLI.</p>
+          <p class="enxame-det-rodape">Isto é leitura: <b>digitar</b> no terminal da IA não atravessa o app, e
+            não vai atravessar — stdin livre para um processo que roda com a sua conta é outra categoria de risco.
+            <b>Parar</b> e <b>redisparar</b> já atravessam, pelos comandos <code>/parar</code> e <code>/refaz</code>,
+            que mostram a previsão antes e só executam com o recibo daquela previsão.</p>
         </div>
       </div>`;
     EX.remoto.scrollIntoView({block:'nearest', behavior:'smooth'});
