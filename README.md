@@ -37,11 +37,18 @@ A mensagem aparece na janela **na hora, sem recarregar**, e o sino toca só para
 chamado. Não é polling de segundo em segundo: a página mantém um fluxo SSE aberto com o
 servidor, e ele empurra o evento quando a sala muda.
 
-Dá para ver o mecanismo cru, sem abrir o app. Num terminal, escute o fluxo:
+Dá para ver o mecanismo cru, sem abrir o app. Num terminal, suba um servidor **só de
+leitura** e escute o fluxo:
 
 ```bash
+python3 ui/servir.py --porta 8801 &          # leitura: sem token, só nesta máquina
 curl -sN "http://127.0.0.1:8801/api/stream?desde=0"
 ```
+
+> O `--porta` é seu porque **o servidor precisa ser este**. Não dá para espiar o do app:
+> ele nasce em porta escolhida na hora e, por servir em modo escrita, exige token — o
+> `curl` sem credencial recebe `{"erro": "token inválido ou ausente"}`. Modo leitura
+> dispensa as duas coisas, que é o que torna esta demonstração de duas linhas possível.
 
 Noutro, poste. O primeiro terminal recebe, no instante do post:
 
