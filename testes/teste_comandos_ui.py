@@ -16,9 +16,9 @@ fica escrita nas três travas que este teste prova:
    `?de=kimi` na URL ou `de` no payload não trocam a assinatura: foi aceitando
    identidade do cliente que apareceu na sala, em 17/08, uma mensagem assinada
    `bauer` que ele não escreveu.
-3. MOSTRAR ANTES DE GASTAR OU MATAR — `plan`/`parar`/`refaz` sem `seco` nem
-   `confirmado` morrem no servidor com 400. A confirmação é gate, não cortesia
-   do JavaScript.
+3. MOSTRAR ANTES DE GASTAR OU MATAR — `plan`/`parar`/`refaz` só aceitam a
+   confirmação acompanhada do recibo server-side, curto e descartável, emitido
+   pela previsão correspondente. A confirmação é gate, não cortesia do JavaScript.
 
 E o achado crítico de 17/08 vale para TODOS os gates desta casa: teste que só
 vê sala NOVA não pega destruição de histórico. Este aqui cria a sala com
@@ -29,6 +29,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import runpy
 import signal
 import socket
 import subprocess
@@ -189,6 +190,23 @@ def main() -> int:
     checa("rota paramétrica `/api/comando` não existe", "/api/comando" not in fonte)
     checa("todo POST de comando passa pelo gate de confirmação",
           "EXIGEM_CONFIRMACAO" in corpo and '"confirmado"' in corpo)
+    modulo_servidor = runpy.run_path(str(SERVIR))
+    emite_recibo = modulo_servidor.get("_emite_recibo")
+    consome_recibo = modulo_servidor.get("_consome_recibo")
+    ttl_recibo = modulo_servidor.get("RECIBO_TTL_S")
+    checa("recibo tem validade curta, em minutos",
+          isinstance(ttl_recibo, int) and 60 <= ttl_recibo <= 600,
+          str(ttl_recibo))
+    checa("servidor possui emissão e consumo próprios do recibo",
+          callable(emite_recibo) and callable(consome_recibo))
+    if callable(emite_recibo) and callable(consome_recibo) and isinstance(ttl_recibo, int):
+        recibo_expira = emite_recibo(
+            "refaz", {"ia": "codex", "seco": True}, "previsão exata", agora=1000.0)
+        aceito, motivo = consome_recibo(
+            "refaz", {"ia": "codex", "confirmado": True,
+                      "recibo": recibo_expira}, agora=1000.0 + ttl_recibo + 0.1)
+        checa("REPROVA: recibo expirado não confirma",
+              aceito is False and "expir" in motivo.lower(), motivo)
 
     print("— trava 2: a paleta chama de verdade, e o CLI é quem existe —")
     cmds = comandos_do_js()
@@ -248,10 +266,23 @@ def main() -> int:
     home = Path(tempfile.mkdtemp(prefix="ui-comandos-"))
     porta = porta_livre()
     proc, token = sobe(home, porta)
+    fake = None
     try:
         if not token:
             checa("servidor subiu e anunciou o token", False, "sem token no stdout")
             return 1
+
+        print("— trava 3: confirmação enviada de primeira morre no servidor —")
+        confirmacoes_sem_previsao = (
+            ("/api/plan", {"confirmado": True}),
+            ("/api/parar", {"confirmado": True}),
+            ("/api/refaz", {"ia": "codex", "confirmado": True}),
+        )
+        for rota, payload_direto in confirmacoes_sem_previsao:
+            cod, corpo_resp = pede(porta, rota, token, "POST", payload_direto)
+            checa(f"REPROVA: {rota} confirmado direto exige previsão + recibo",
+                  cod == 400 and "recibo" in corpo_resp.lower(),
+                  f"HTTP {cod}: {corpo_resp[:140]}")
 
         print("— sala COM HISTÓRIA antes de qualquer comando (achado de 17/08) —")
         posta(home, "claude", "primeira mensagem da sala de teste")
@@ -305,6 +336,9 @@ def main() -> int:
               cod == 200 and d.get("ok") is True
               and "seriam despachadas" in d.get("saida", ""),
               f"HTTP {cod}: {corpo_resp[:140]}")
+        checa("a previsão de plan traz recibo nascido no servidor",
+              isinstance(d.get("recibo"), str) and len(d["recibo"]) >= 32,
+              corpo_resp[:180])
 
         print("— o parar de verdade, contra um worker vivo —")
         missao = home / "comando" / "m1"
@@ -326,23 +360,74 @@ def main() -> int:
             "log": str(missao / "logs" / "fake.log"),
             "plano": str(missao / "planos" / "fake.md"),
             "prompt": str(prompt),
+        }, "codex": {
+            "braco": "codex", "papel": "worker morto de teste", "pid": 999999,
+            "lstart": "", "inicio": "2026-08-18T06:00:00-03:00",
+            "estado": "falhou", "tentativas": 1,
+            "log": str(missao / "logs" / "codex.log"),
+            "plano": str(missao / "planos" / "codex.md"),
+            "prompt": str(missao / "logs" / "codex.prompt.txt"),
         }}
         (home / "comando" / "estado.json").write_text(
             json.dumps(estado, indent=2), encoding="utf-8")
 
         cod, corpo_resp = pede(porta, "/api/parar", token, "POST", {"seco": True})
         d = json.loads(corpo_resp)
+        recibo_cruzado = d.get("recibo")
         checa("a previsão mostra o worker vivo, com pid",
               cod == 200 and str(fake.pid) in d.get("saida", ""),
               corpo_resp[:160])
+        checa("a previsão de parar traz recibo server-side",
+              isinstance(recibo_cruzado, str) and len(recibo_cruzado) >= 32,
+              corpo_resp[:180])
         checa("a previsão NÃO mata", fake.poll() is None)
 
-        cod, corpo_resp = pede(porta, "/api/parar", token, "POST", {"confirmado": True})
+        cod, corpo_resp = pede(porta, "/api/plan", token, "POST",
+                               {"confirmado": True, "recibo": recibo_cruzado})
+        checa("REPROVA: recibo de parar não confirma plan",
+              cod == 400 and "recibo" in corpo_resp.lower(),
+              f"HTTP {cod}: {corpo_resp[:140]}")
+
+        cod, corpo_resp = pede(porta, "/api/refaz", token, "POST",
+                               {"ia": "codex", "seco": True})
+        d = json.loads(corpo_resp)
+        recibo_refaz = d.get("recibo")
+        checa("a previsão de refaz traz recibo server-side",
+              cod == 200 and isinstance(recibo_refaz, str) and len(recibo_refaz) >= 32,
+              f"HTTP {cod}: {corpo_resp[:180]}")
+        cod, corpo_resp = pede(porta, "/api/refaz", token, "POST",
+                               {"ia": "kimi", "confirmado": True,
+                                "recibo": recibo_refaz})
+        checa("REPROVA: recibo de refaz codex não confirma refaz kimi",
+              cod == 400 and "recibo" in corpo_resp.lower(),
+              f"HTTP {cod}: {corpo_resp[:140]}")
+        cod, corpo_resp = pede(porta, "/api/refaz", token, "POST",
+                               {"ia": "codex", "confirmado": True,
+                                "recibo": recibo_refaz})
+        checa("REPROVA: recibo que falhou por argumentos já queimou",
+              cod == 400 and "recibo" in corpo_resp.lower(),
+              f"HTTP {cod}: {corpo_resp[:140]}")
+
+        cod, corpo_resp = pede(porta, "/api/parar", token, "POST", {"seco": True})
+        d = json.loads(corpo_resp)
+        recibo_parar = d.get("recibo")
+        checa("nova previsão emite recibo novo para o caminho honesto",
+              isinstance(recibo_parar, str) and recibo_parar != recibo_cruzado,
+              corpo_resp[:180])
+
+        cod, corpo_resp = pede(porta, "/api/parar", token, "POST",
+                               {"confirmado": True, "recibo": recibo_parar})
         d = json.loads(corpo_resp)
         time.sleep(0.4)
         morto = fake.poll() is not None
         checa("o disparo confirmado mata o worker", cod == 200 and morto,
               f"HTTP {cod}: {corpo_resp[:140]}")
+        cod_replay, corpo_replay = pede(
+            porta, "/api/parar", token, "POST",
+            {"confirmado": True, "recibo": recibo_parar})
+        checa("REPROVA: segundo clique não reutiliza recibo queimado",
+              cod_replay == 400 and "recibo" in corpo_replay.lower(),
+              f"HTTP {cod_replay}: {corpo_replay[:140]}")
         estado = json.loads((home / "comando" / "estado.json").read_text())
         checa("o estado da missão registra o parar",
               estado.get("estado") == "parada"
@@ -419,6 +504,12 @@ def main() -> int:
         checa("REPROVA: parâmetro do cliente não muda o comando (resposta idêntica)",
               json.loads(sem).get("quem") == json.loads(com).get("quem"))
     finally:
+        if fake is not None and fake.poll() is None:
+            fake.terminate()
+            try:
+                fake.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                fake.kill()
         proc.terminate()
         try:
             proc.wait(timeout=5)

@@ -112,9 +112,10 @@ COMANDOS_POST: dict[str, tuple[str, bool]] = {
     "refaz": ("refaz", False),
     "decidi": ("decidi", True),
 }
-# Os que gastam ou matam: sem `seco` no payload, o pedido tem que trazer
-# `confirmado`. (`plan --colher` só lê os planos; o tratamento está em
-# `_comando_post`.)
+# Os que gastam ou matam: a previsão `seco` recebe um recibo efêmero nascido
+# neste processo. A execução precisa devolver esse recibo junto de
+# `confirmado`; um booleano sozinho não prova que a previsão existiu.
+# (`plan --colher` só lê os planos; o tratamento está em `_comando_post`.)
 EXIGEM_CONFIRMACAO = ("plan", "parar", "refaz")
 # Teto de tempo: o `quem` varre a tabela de processos. Se travar, a thread do
 # servidor fica presa e a vaga não volta — o mesmo problema do SSE sem teto.
@@ -123,6 +124,15 @@ TETO_COMANDO_S = 8
 # espera educada de SIGTERM — custa mais que uma leitura. 20 s cobre com folga
 # sem virar thread presa.
 TETO_COMANDO_POST_S = 20
+
+# Recibos do mostrar-antes. Três minutos são tempo humano para ler e clicar,
+# mas não uma autorização reaproveitável horas depois. O dicionário é memória
+# do processo: reiniciar o servidor invalida tudo por construção. O teto evita
+# que um cliente autenticado acumule previsões sem limite dentro da janela.
+RECIBO_TTL_S = 180
+TETO_RECIBOS = 256
+_RECIBOS: dict[str, dict] = {}
+_RECIBOS_TRAVA = threading.Lock()
 
 # O sino do DONO usa a infraestrutura que o ia-chat já possui. O estado não
 # mora aqui: continua sendo `config.json:notificar_operador`. Ao ligar pelo app,
@@ -199,6 +209,61 @@ FAVICON = base64.b64decode(
 TETO_SSE = 16
 _SSE = {"vivas": 0}
 _SSE_TRAVA = threading.Lock()
+
+
+def _argumentos_recibo(dados: dict) -> str:
+    """Serializa só os argumentos reais; controles HTTP não fazem parte deles."""
+    argumentos = {
+        k: v for k, v in dados.items()
+        if k not in ("seco", "confirmado", "recibo")
+    }
+    return json.dumps(
+        argumentos, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _emite_recibo(nome: str, dados: dict, previsao: str,
+                   agora: float | None = None) -> str:
+    """Guarda no servidor uma autorização curta ligada ao comando e previsão."""
+    instante = time.monotonic() if agora is None else agora
+    registro = {
+        "comando": nome,
+        "argumentos": _argumentos_recibo(dados),
+        "previsao": previsao,
+        "expira": instante + RECIBO_TTL_S,
+    }
+    with _RECIBOS_TRAVA:
+        expirados = [chave for chave, item in _RECIBOS.items()
+                     if item["expira"] <= instante]
+        for chave in expirados:
+            _RECIBOS.pop(chave, None)
+        while len(_RECIBOS) >= TETO_RECIBOS:
+            mais_antigo = min(_RECIBOS, key=lambda chave: _RECIBOS[chave]["expira"])
+            _RECIBOS.pop(mais_antigo, None)
+        recibo = secrets.token_urlsafe(32)
+        while recibo in _RECIBOS:
+            recibo = secrets.token_urlsafe(32)
+        _RECIBOS[recibo] = registro
+    return recibo
+
+
+def _consome_recibo(nome: str, dados: dict,
+                     agora: float | None = None) -> tuple[bool, str]:
+    """Queima o recibo antes de validar: erro ou segundo clique não o reutilizam."""
+    recibo = dados.get("recibo")
+    if not isinstance(recibo, str) or not recibo.strip():
+        return False, "recibo ausente: peça a previsão antes de confirmar"
+    instante = time.monotonic() if agora is None else agora
+    with _RECIBOS_TRAVA:
+        registro = _RECIBOS.pop(recibo, None)
+    if registro is None:
+        return False, "recibo desconhecido ou já usado: peça uma nova previsão"
+    if registro["expira"] <= instante:
+        return False, "recibo expirado: peça uma nova previsão"
+    if registro["comando"] != nome:
+        return False, "recibo pertence a outro comando: peça a previsão correta"
+    if registro["argumentos"] != _argumentos_recibo(dados):
+        return False, "recibo pertence a outros argumentos: peça nova previsão"
+    return True, "ok"
 
 
 def ultima() -> int:
@@ -652,9 +717,9 @@ class Sala(BaseHTTPRequestHandler):
         vai pelo stdin e é validado no CLI, chave a chave (`le_via_app`).
 
         Gate do mostrar-antes: `plan` (fora colher), `parar` e `refaz` (fora
-        seco) exigem `"confirmado": true` no payload. A interface mostra a
-        previsão e só então confirma; quem pula a previsão morre aqui, não no
-        clique — a confirmação é gate do servidor.
+        seco) exigem `"confirmado": true` MAIS o recibo efêmero emitido pela
+        previsão correspondente. Quem pula a previsão, troca os argumentos ou
+        clica duas vezes morre aqui — a confirmação é gate do servidor.
         """
         alvo = COMANDOS_POST.get(nome)
         if alvo is None:
@@ -663,11 +728,16 @@ class Sala(BaseHTTPRequestHandler):
         if nome in EXIGEM_CONFIRMACAO:
             so_leitura = dados.get("seco") is True or (
                 nome == "plan" and dados.get("colher") is True)
-            if not so_leitura and dados.get("confirmado") is not True:
-                return self._json(
-                    {"erro": "este comando gasta ou mata: primeiro a previsão "
-                             "(payload com \"seco\": true), que a interface mostra; "
-                             "só depois a confirmação (\"confirmado\": true)."}, 400)
+            if not so_leitura:
+                if dados.get("confirmado") is not True:
+                    return self._json(
+                        {"erro": "este comando gasta ou mata: primeiro a previsão "
+                                 "(payload com \"seco\": true), que devolve um "
+                                 "recibo; só depois envie \"confirmado\": true "
+                                 "com esse recibo."}, 400)
+                aceito, motivo = _consome_recibo(nome, dados)
+                if not aceito:
+                    return self._json({"erro": motivo}, 400)
         if not IACHAT_COMANDO.is_file():
             return self._json(
                 {"erro": "iachat-comando não está instalado nesta máquina",
@@ -677,8 +747,9 @@ class Sala(BaseHTTPRequestHandler):
             # Identidade do SERVIDOR, nunca do cliente (trava 2 da allowlist).
             argv += ["--de", CFG["papel"]]
         argv.append("--via-app")
-        # `confirmado` é a trava DESTA camada; o CLI não a conhece. Não viaja.
-        payload = {k: v for k, v in dados.items() if k != "confirmado"}
+        # `confirmado` e `recibo` são travas DESTA camada; o CLI não os conhece.
+        payload = {k: v for k, v in dados.items()
+                   if k not in ("confirmado", "recibo")}
         try:
             r = subprocess.run(
                 argv, capture_output=True, text=True,
@@ -694,8 +765,15 @@ class Sala(BaseHTTPRequestHandler):
         saida = (r.stdout or "").strip()
         aviso = (r.stderr or "").strip()
         if r.returncode == 0:
-            return self._json({"ok": True, "comando": nome,
-                               "saida": saida[:8000], "aviso": aviso[:2000]})
+            resposta = {"ok": True, "comando": nome,
+                        "saida": saida[:8000], "aviso": aviso[:2000]}
+            if nome in EXIGEM_CONFIRMACAO and dados.get("seco") is True:
+                previsao = json.dumps(
+                    {"saida": resposta["saida"], "aviso": resposta["aviso"]},
+                    ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+                resposta["recibo"] = _emite_recibo(nome, dados, previsao)
+                resposta["recibo_expira_em_s"] = RECIBO_TTL_S
+            return self._json(resposta)
         # Recusa do comando (exit 2/3) não é defeito do servidor: é o
         # fail-closed do CLI falando. A interface mostra tal qual.
         return self._json({"ok": False, "comando": nome, "codigo": r.returncode,
