@@ -1,5 +1,58 @@
 # CHANGELOG — ia-chat-app
 
+## 2026-08-18 (tarde) — o dourado recupera o que faltava, e o mapa vira leitura de verdade
+
+> Bateria: **25 arquivos verdes**, medido por exit code — o laço antigo julgava pelo
+> TEXTO da última linha e, no repo vizinho, deu 22 vermelhos falsos de 38.
+
+### As 6 funções do neon que faltavam no IASWARM dourado
+
+Ele pediu a janela do enxame em dourado *"preservando TODAS as suas funções"*. Uma
+auditoria independente contou uma a uma: **19 de 25**. As seis que faltavam voltaram:
+
+- o **foco de teclado** se perdia a cada 2 s. O neon devolvia scroll *e* foco depois de
+  cada tick; o dourado devolvia só o scroll, o que tornava a janela inutilizável sem
+  mouse. Era o mais grave;
+- o **relógio do run** sumiu do cartão — voltou o `entregues · HH:MM` da última
+  evidência, e ele some quando não há evidência, em vez de mostrar hora inventada;
+- a **paleta** encolhera de ~44 marcas para 14, sem os apelidos: `k2`, `dashscope`,
+  `gpt`, `mistral`, `nvidia` e `azure` caíam num tom por hash;
+- o **deep link `?abrir=`** trocara de função — no neon expandia um worker, no dourado
+  abria a doca. Endereço é contrato: quem salvou um link chegava noutro lugar;
+- a **animação de estreia** voltou, só na primeira pintura e desligada sob
+  `prefers-reduced-motion`;
+- o **modo snapshot** ficou de fora DE PROPÓSITO, e agora está escrito no `DESIGN.md`
+  §15. Ele existia porque o neon abria por `file://` sem servidor. O problema nunca foi
+  a ausência — foi ela não estar declarada.
+
+Quatro cores tiveram o **tom** ajustado para caber no papel dourado, mantendo a
+identidade: `xai`, `huggingface`, `modal`, `moonshot`. Branco e lima-neon somem ou
+gritam sobre palha.
+
+### O mapa de retomada virou leitura, não texto morto
+
+Ele lê o `caminho.md` no celular, pela aba Mapa. Três coisas que só aparecem olhando a
+tela: o endereço do painel era texto que não abre; `[[wikilink]]` aparecia cru; e um
+caminho longo quebrava no meio da palavra (`/.clau` numa linha, `de/` na outra).
+
+Agora `http`/`https` viram link em aba nova — e **só** eles: `javascript:` e `data:` não,
+que é onde mora o abuso numa sala que recebe texto de quatro IAs. O wikilink vira rótulo
+com os colchetes visíveis, deliberadamente **não** clicável: o vault não é servido aqui,
+e link que não abre mente. E cada `/` do caminho ganhou ponto de quebra.
+
+### O foco volta para o botão que abriu a gaveta
+
+Ele pediu o mesmo botão da barra lateral também no topo. Os dois estavam lá, mas fechar
+devolvia o foco sempre ao de baixo — quem abria pelo topo era jogado para o outro canto
+da tela; no celular, para um botão fora de vista.
+
+### E o "confirmar antes" passou a viver no servidor
+
+A auditoria provou que `POST /api/parar` com `{"confirmado":true}` e nada antes voltava
+200 e matava o processo. Agora a previsão devolve um recibo de uso único, amarrado ao
+comando e aos argumentos. Detalhe no CHANGELOG do `ia-chat`.
+
+
 ## 2026-08-18 (madrugada) — o app parou de mentir, e passou a alcançar o celular
 
 > Bateria: **22 arquivos verdes.** Oito correções, todas achadas por auditoria externa
