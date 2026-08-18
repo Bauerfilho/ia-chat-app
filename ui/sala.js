@@ -147,7 +147,15 @@ function corpoHTML(txt){
 /* ── render da sala ──────────────────────────────────────────────────────── */
 function paraLegivel(para){
   const l = Array.isArray(para) ? para : (para ? [para] : []);
-  if (!l.length) return {html:'<b>todas</b>', lista:S.naSala};
+  // Lista VAZIA é "ninguém", nunca "todas". Numa sala de 3+, postar sem `@` não chama
+  // ninguém — o CLI diz isso na cara (`→ ninguém` + aviso no stderr) e a UI pintava
+  // **todas**. Quem lê o histórico jura que a sala inteira foi convocada; decide, cobra,
+  // acusa atraso — em cima de uma mensagem que não tocou sino nenhum.
+  //
+  // "todas" tem um significado exato: `para` contendo `all`/`todas`. Ausência de
+  // destinatário não é sinônimo de todos os destinatários; é o oposto.
+  // Achado do worker `j1-app-paralelo`, medido contra `iachat_core.py:376-380`.
+  if (!l.length) return {html:'<i>ninguém nominado</i>', lista:[]};
   if (l.length === 1 && /^(all|todas)$/i.test(l[0])) return {html:'<b>todas</b>', lista:S.naSala};
   return {html: l.map(n=>`<b style="--ia-t:var(--${corDe(n)}-t)">@${esc(n)}</b>`).join(', '), lista:l};
 }
@@ -681,6 +689,14 @@ async function envia(){
     });
     const d = await r.json();
     if (!r.ok || d.erro) throw new Error(d.erro || ('HTTP '+r.status));
+    // O núcleo devolve `avisos` junto com o sucesso: "postou, MAS ninguém foi chamado",
+    // "postou, MAS a sala vai rotacionar". O CLI imprime cada um no stderr; a UI olhava
+    // só `d.erro` e engolia o resto — sucesso silencioso sobre uma entrega pela metade.
+    // O fallback antigo (`servidor.py`) mostrava; a interface nova perdeu.
+    // Achado do worker `j1-app-paralelo`.
+    // Sem tipo novo: `avisa` só conhece 'ok' e 'erro', e um 'atencao' inventado cairia
+    // num estilo que não existe. Aviso não é erro — o post foi feito.
+    (d.avisos || []).forEach(a => avisa(esc(a)));
     E.texto.value = ''; ajustaAltura(); atualizaDestino();
     fechaPaleta(); S.colado = true;
   }catch(e){

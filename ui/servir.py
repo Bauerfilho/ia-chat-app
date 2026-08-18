@@ -138,7 +138,17 @@ def ultima() -> int:
 
 def msgs_desde(n: int) -> list[dict]:
     with core.travado():
-        brutas = core._msgs_desde(n) if n > 0 else core.parse(core.p_chat().read_text())
+        # SEMPRE `core._msgs_desde`, inclusive com n==0. O atalho `parse(p_chat())` lia
+        # só o arquivo ATIVO e ignorava os recortes — então, depois de uma rotação
+        # (que é automática quando o ativo estoura o teto), o app abria parecendo uma
+        # sala nova. As mensagens antigas não foram apagadas: o CLI ainda as acha,
+        # porque `_msgs_desde` abre os recortes quando falta faixa. Quem só usa o app
+        # concluiria que o começo da conversa evaporou.
+        #
+        # É o mesmo desenho do `--lan` e do `entrar`: o núcleo resolveu, o app tomou um
+        # atalho paralelo. Achado do worker `j1-app-paralelo`, medido com
+        # `iachat rotate --forcar` (7 msgs → recorte-01, ativo em #8).
+        brutas = core._msgs_desde(n)
     saida = []
     for m in brutas:
         if m["n"] <= n:
