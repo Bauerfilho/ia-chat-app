@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-tema="palha">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#F2EADA">
+<title>ia chat</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2316130E'/%3E%3Ctext x='16' y='23' font-size='19' text-anchor='middle' fill='%23D4B25F'%3E%E2%97%88%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="estilo.css">
+</head>
+<body>
+
+<!-- ── CAMADA 1 · o campo de luz ─────────────────────────────────────────── -->
+<div class="campo" aria-hidden="true">
+  <div class="campo-mesh"></div>
+  <div class="campo-aurora"></div>
+</div>
+<!-- ── CAMADA 2 · o papel: pauta + grão ──────────────────────────────────── -->
+<div class="papel" aria-hidden="true">
+  <div class="papel-pauta"></div>
+  <svg class="papel-grao" xmlns="http://www.w3.org/2000/svg">
+    <filter id="grao"><feTurbulence type="fractalNoise" baseFrequency="0.82" numOctaves="3" stitchTiles="stitch"/>
+      <feColorMatrix type="saturate" values="0"/></filter>
+    <rect width="100%" height="100%" filter="url(#grao)"/>
+  </svg>
+</div>
+
+<a class="pular" href="#sala">Pular para a conversa</a>
+
+<!-- ── CAMADA 3 · o conteúdo ─────────────────────────────────────────────── -->
+<div class="moldura">
+
+  <!-- TRILHO — carvão: é aqui que a cor por IA vive viva ------------------ -->
+  <nav class="trilho" aria-label="Presença na sala">
+    <div class="trilho-marca" title="ia-chat">
+      <span class="marca-glifo" aria-hidden="true">◈</span>
+      <span class="marca-nome">ia<i>·</i>chat</span>
+    </div>
+
+    <h2 class="trilho-titulo" id="rot-presenca">Na sala</h2>
+    <ul class="presenca" id="presenca" aria-labelledby="rot-presenca"></ul>
+
+    <div class="trilho-rodape">
+      <button class="trilho-btn" id="btn-tema" aria-label="Alternar tema claro e escuro" title="Alternar tema (⌘⇧L)">
+        <span class="trilho-btn-glifo" aria-hidden="true">◑</span>
+      </button>
+      <button class="trilho-btn" id="btn-gaveta" aria-label="Mostrar ou ocultar o painel lateral"
+              aria-expanded="true" aria-controls="gaveta" title="Painel lateral (⌘J)">
+        <span class="trilho-btn-glifo" aria-hidden="true">▤</span>
+      </button>
+    </div>
+  </nav>
+
+  <!-- CABEÇALHO ----------------------------------------------------------- -->
+  <header class="cabeca">
+    <div class="cabeca-id">
+      <h1 class="cabeca-titulo">ia&nbsp;chat</h1>
+      <p class="cabeca-sub">
+        <span id="contador" class="num">—</span> mensagens
+        <span class="ponto-sep" aria-hidden="true">·</span>
+        <span id="peso" class="num">—</span>
+      </p>
+    </div>
+
+    <div class="cabeca-busca">
+      <label class="oculto-visual" for="busca">Buscar na sala</label>
+      <span class="busca-glifo" aria-hidden="true">⌕</span>
+      <input id="busca" type="search" name="busca" autocomplete="off" spellcheck="false"
+             placeholder="Buscar na sala…" enterkeyhint="search">
+      <kbd class="busca-tecla" aria-hidden="true">⌘&nbsp;K</kbd>
+    </div>
+
+    <div class="cabeca-estado">
+      <span class="elo" id="elo" data-estado="ligando">
+        <span class="elo-pulso" aria-hidden="true"></span>
+        <span class="elo-texto">ligando…</span>
+      </span>
+    </div>
+  </header>
+
+  <!-- SALA ---------------------------------------------------------------- -->
+  <main class="sala" id="sala" tabindex="-1">
+    <div class="sala-fio" id="fio" role="log" aria-live="polite" aria-relevant="additions" aria-label="Mensagens da sala"></div>
+
+    <div class="vazio" id="vazio" hidden>
+      <span class="vazio-glifo" aria-hidden="true">◈</span>
+      <h2 class="vazio-titulo">A sala está em silêncio</h2>
+      <p class="vazio-texto">Escreva abaixo. Sem <code translate="no">@</code>, a mensagem chega a <b class="ouro">todas</b> as IAs.</p>
+    </div>
+
+    <button class="descer" id="descer" hidden aria-label="Ir para a mensagem mais recente">
+      <span aria-hidden="true">↓</span> <span id="descer-n">novas</span>
+    </button>
+  </main>
+
+  <!-- COMPOSITOR ---------------------------------------------------------- -->
+  <form class="compositor" id="compositor" autocomplete="off">
+    <!-- A faixa que resolve a armadilha das duas regras de nominação -->
+    <div class="destino" id="destino" data-modo="todas" aria-live="polite">
+      <span class="destino-seta" aria-hidden="true">↳</span>
+      <span class="destino-texto" id="destino-texto">isto vai para <b>todas</b> as IAs da sala</span>
+      <ul class="destino-alvos" id="destino-alvos" aria-label="Quem será notificado"></ul>
+    </div>
+
+    <div class="caixa">
+      <label class="oculto-visual" for="texto">Sua mensagem</label>
+      <textarea id="texto" name="texto" rows="1" spellcheck="true"
+                placeholder="Escreva para a sala…  /  para comandos,  @  para nominar"></textarea>
+
+      <div class="caixa-pe">
+        <div class="caixa-dicas">
+          <button type="button" class="pilula-cmd" data-insere="/" title="Comandos do dono">
+            <span aria-hidden="true">/</span> comandos
+          </button>
+          <button type="button" class="pilula-cmd" data-insere="@" title="Nominar uma IA">
+            <span aria-hidden="true">@</span> nominar
+          </button>
+          <span class="caixa-conta"><span id="conta" class="num">0</span> caracteres</span>
+        </div>
+        <button type="submit" class="enviar" id="enviar">
+          <span id="enviar-rotulo">Enviar a Todas</span>
+          <kbd aria-hidden="true">⌘&nbsp;↵</kbd>
+        </button>
+      </div>
+    </div>
+
+    <!-- Paleta de comandos do dono -->
+    <div class="paleta" id="paleta" hidden role="listbox" aria-label="Comandos do dono"></div>
+  </form>
+
+  <!-- GAVETA -------------------------------------------------------------- -->
+  <aside class="gaveta" id="gaveta" aria-label="Painel lateral">
+    <div class="gaveta-abas" role="tablist" aria-label="Seções do painel">
+      <button class="aba" role="tab" id="aba-fio"     aria-controls="pnl-fio"     aria-selected="true"  data-pnl="fio">Fio</button>
+      <button class="aba" role="tab" id="aba-decisoes" aria-controls="pnl-decisoes" aria-selected="false" data-pnl="decisoes">Decisões</button>
+      <button class="aba" role="tab" id="aba-dia"      aria-controls="pnl-dia"      aria-selected="false" data-pnl="dia">Dia</button>
+      <button class="aba" role="tab" id="aba-arquivos" aria-controls="pnl-arquivos" aria-selected="false" data-pnl="arquivos">Arquivos</button>
+    </div>
+
+    <section class="painel" role="tabpanel" id="pnl-fio" aria-labelledby="aba-fio" tabindex="0">
+      <h2 class="painel-titulo">O fio</h2>
+      <p class="painel-nota" id="fio-nota">Clique em <b>ver o fio</b> numa mensagem para seguir a conversa entre duas IAs.</p>
+      <ol class="fio-lista" id="fio-lista"></ol>
+    </section>
+
+    <section class="painel" role="tabpanel" id="pnl-decisoes" aria-labelledby="aba-decisoes" tabindex="0" hidden>
+      <h2 class="painel-titulo">Decisões vigentes</h2>
+      <p class="painel-nota">O que foi decidido e continua valendo. <code translate="no">/decidi</code> registra uma nova.</p>
+      <ol class="decisoes" id="decisoes"></ol>
+    </section>
+
+    <section class="painel" role="tabpanel" id="pnl-dia" aria-labelledby="aba-dia" tabindex="0" hidden>
+      <h2 class="painel-titulo">Relatório do dia</h2>
+      <div class="medidas" id="medidas"></div>
+      <h3 class="painel-sub">Linha do tempo</h3>
+      <ol class="linha" id="linha"></ol>
+    </section>
+
+    <section class="painel" role="tabpanel" id="pnl-arquivos" aria-labelledby="aba-arquivos" tabindex="0" hidden>
+      <h2 class="painel-titulo">Arquivos reservados</h2>
+      <p class="painel-nota">Quem está com a mão em qual arquivo — para duas IAs não escreverem no mesmo.</p>
+      <ul class="reservas" id="reservas"></ul>
+    </section>
+  </aside>
+</div>
+
+<div class="avisos" id="avisos" role="status" aria-live="polite"></div>
+
+<script src="sala.js"></script>
+</body>
+</html>

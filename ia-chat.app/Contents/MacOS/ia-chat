@@ -1,0 +1,19 @@
+#!/bin/bash
+# ia-chat — executável do bundle. Só acha um python3 e entrega o controle.
+#
+# O Finder lança com PATH mínimo (/usr/bin:/bin:/usr/sbin:/sbin), então o
+# interpretador é procurado por caminho absoluto, na ordem, e nunca assumido.
+# `/usr/bin/python3` (3.9, sempre presente no macOS) roda o lançador sem
+# reclamar — o repo inteiro é stdlib pura.
+set -e
+AQUI="$(cd "$(dirname "$0")/../Resources" && pwd)"
+
+for PY in /opt/homebrew/bin/python3 /usr/local/bin/python3 /usr/bin/python3; do
+  if [ -x "$PY" ]; then exec "$PY" "$AQUI/lancador.py" "$@"; fi
+done
+
+PY="$(command -v python3 2>/dev/null || true)"
+if [ -n "$PY" ]; then exec "$PY" "$AQUI/lancador.py" "$@"; fi
+
+/usr/bin/osascript -e 'display alert "ia-chat" message "Nenhum python3 encontrado nesta máquina." as critical' >/dev/null 2>&1
+exit 1

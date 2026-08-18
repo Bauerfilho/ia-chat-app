@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.DS_Store
+
+# O .icns é gerado a partir do icone.svg por `marca/gerar_icone.py`.
+# Fica versionado de propósito: quem baixa o app não deve precisar de iconutil.
