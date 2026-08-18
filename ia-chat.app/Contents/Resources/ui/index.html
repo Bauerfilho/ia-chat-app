@@ -80,7 +80,11 @@
 
   <!-- SALA ---------------------------------------------------------------- -->
   <main class="sala" id="sala" tabindex="-1">
-    <div class="sala-fio" id="fio" role="log" aria-live="polite" aria-relevant="additions" aria-label="Mensagens da sala"></div>
+    <!-- Uma parada de Tab para a conversa inteira. Com 31 mensagens, os três botões de
+         cada uma somavam 93 paradas antes do campo de escrita (medido). Aqui o log é
+         UM ponto de entrada; ↑↓ escolhem a mensagem e só as ações dela entram no Tab. -->
+    <div class="sala-fio" id="fio" role="log" aria-live="polite" aria-relevant="additions"
+         tabindex="0" aria-label="Mensagens da sala — use as setas para percorrer"></div>
 
     <div class="vazio" id="vazio" hidden>
       <span class="vazio-glifo" aria-hidden="true">◈</span>
@@ -131,10 +135,10 @@
   <!-- GAVETA -------------------------------------------------------------- -->
   <aside class="gaveta" id="gaveta" aria-label="Painel lateral">
     <div class="gaveta-abas" role="tablist" aria-label="Seções do painel">
-      <button class="aba" role="tab" id="aba-fio"     aria-controls="pnl-fio"     aria-selected="true"  data-pnl="fio">Fio</button>
-      <button class="aba" role="tab" id="aba-decisoes" aria-controls="pnl-decisoes" aria-selected="false" data-pnl="decisoes">Decisões</button>
-      <button class="aba" role="tab" id="aba-dia"      aria-controls="pnl-dia"      aria-selected="false" data-pnl="dia">Dia</button>
-      <button class="aba" role="tab" id="aba-arquivos" aria-controls="pnl-arquivos" aria-selected="false" data-pnl="arquivos">Arquivos</button>
+      <button class="aba" role="tab" id="aba-fio"     aria-controls="pnl-fio"     aria-selected="true"  tabindex="0"  data-pnl="fio">Fio</button>
+      <button class="aba" role="tab" id="aba-decisoes" aria-controls="pnl-decisoes" aria-selected="false" tabindex="-1" data-pnl="decisoes">Decisões</button>
+      <button class="aba" role="tab" id="aba-dia"      aria-controls="pnl-dia"      aria-selected="false" tabindex="-1" data-pnl="dia">Dia</button>
+      <button class="aba" role="tab" id="aba-arquivos" aria-controls="pnl-arquivos" aria-selected="false" tabindex="-1" data-pnl="arquivos">Arquivos</button>
     </div>
 
     <section class="painel" role="tabpanel" id="pnl-fio" aria-labelledby="aba-fio" tabindex="0">
@@ -144,21 +148,26 @@
     </section>
 
     <section class="painel" role="tabpanel" id="pnl-decisoes" aria-labelledby="aba-decisoes" tabindex="0" hidden>
-      <h2 class="painel-titulo">Decisões vigentes</h2>
-      <p class="painel-nota">O que foi decidido e continua valendo. <code translate="no">/decidi</code> registra uma nova.</p>
+      <h2 class="painel-titulo">Decisões e marcações</h2>
+      <p class="painel-nota">Derivado das mensagens, pela mesma regra do <code translate="no">ia-report</code>:
+        comece uma linha com <code translate="no">DECIDIDO:</code> — também valem
+        <code translate="no">PENDENTE:</code>, <code translate="no">BLOQUEIO:</code> e <code translate="no">PERGUNTA:</code>.</p>
       <ol class="decisoes" id="decisoes"></ol>
     </section>
 
     <section class="painel" role="tabpanel" id="pnl-dia" aria-labelledby="aba-dia" tabindex="0" hidden>
       <h2 class="painel-titulo">Relatório do dia</h2>
+      <p class="painel-nota">Contado aqui, a partir das mensagens de hoje que a sala entregou.</p>
       <div class="medidas" id="medidas"></div>
       <h3 class="painel-sub">Linha do tempo</h3>
       <ol class="linha" id="linha"></ol>
     </section>
 
     <section class="painel" role="tabpanel" id="pnl-arquivos" aria-labelledby="aba-arquivos" tabindex="0" hidden>
-      <h2 class="painel-titulo">Arquivos reservados</h2>
-      <p class="painel-nota">Quem está com a mão em qual arquivo — para duas IAs não escreverem no mesmo.</p>
+      <h2 class="painel-titulo">Arquivos citados</h2>
+      <p class="painel-nota">Caminhos que apareceram nas mensagens, e quem os mencionou por último —
+        derivado da sala. As reservas do <code translate="no">ia-claim</code> vivem em
+        <code translate="no">claims/</code> e ainda não trafegam por nenhuma rota do servidor.</p>
       <ul class="reservas" id="reservas"></ul>
     </section>
   </aside>

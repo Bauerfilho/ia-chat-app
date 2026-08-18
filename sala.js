@@ -14,50 +14,16 @@
 const IAS = ['claude','codex','kimi','agy','grok','qwen','ollama','deepseek','dourada','bauer'];
 const DONO = 'bauer';
 
-/* ── comandos do dono ──────────────────────────────────────────────────────
-   `onde` diz ONDE o comando age, e a paleta MOSTRA isso. Antes havia
-   `pronto:true/false`, e ele mentia dos dois lados: nenhum dos sete chegava a
-   `bin/iachat-comando` — os sete viravam mensagem de chat —, e ainda assim
-   `/plan` anunciava "todas as IAs vivas" e `/concluir` "quem foi designado",
-   insinuando execução que não existia. Os `false` não diziam o que fazer;
-   apareciam na tela e calavam. Comando morto na tela é pior que comando ausente.
-
-     sala     — vira mensagem na sala, e as IAs leem e agem. Não é consolo: é o
-                mecanismo para o qual a sala foi construída.
-     aqui     — atravessa o servidor e responde aqui mesmo. Só LEITURA.
-     terminal — NÃO atravessa. Mata processo ou gasta assinatura do dono, e a
-                paleta entrega a linha pronta para copiar em vez de fingir.
-
-   Por que `terminal` e não uma rota: o servidor roda com `--lan`, e mesmo sem
-   ele a loopback não é fronteira de confiança nesta máquina (ver o comentário
-   de `_ok_token` em `servir.py`: com 127.0.0.1 apareceu na sala uma mensagem
-   assinada `bauer` que ninguém escreveu). Um token vazado que posta mensagem se
-   retrata; um que mata a frota no meio de uma onda, não.
-
-   `/decidi` é `terminal` e não `sala` de propósito: postado como mensagem ele
-   NÃO entra em `decisoes.md`, e uma decisão que existe na sala mas não no
-   registro é a dívida dos dois instrumentos de volta, só que de roupa nova. */
+/* ── comandos do dono ────────────────────────────────────────────────────── */
 const COMANDOS = [
-  {cmd:'/goal',     desc:'Enunciar o objetivo da rodada',                 onde:'sala',     quem:'ninguém executa — é o enunciado'},
-  {cmd:'/plan',     desc:'A frota ativa planeja junta e devolve o plano', onde:'sala',     quem:'as IAs da sala leem e agem'},
-  {cmd:'/concluir', desc:'Autorizar: pode aplicar',                       onde:'sala',     quem:'quem foi designado no plano'},
-  {cmd:'/quem',     desc:'Quem está vivo, no quê, há quanto tempo',       onde:'aqui',     quem:'lê o estado e responde aqui'},
-  {cmd:'/parar',    desc:'Abortar a missão em andamento',                 onde:'terminal', quem:'mata processo',
-   porque:'mata processo, e matar não tem desfazer.', linha:'iachat-comando parar'},
-  {cmd:'/refaz',    desc:'Redisparar worker morto de onde parou',         onde:'terminal', quem:'gasta assinatura',
-   porque:'redispara uma IA paga, e isso gasta a assinatura dele.', linha:'iachat-comando refaz --ia <ia>'},
-  {cmd:'/decidi',   desc:'Registrar decisão que todas obedecem',          onde:'terminal', quem:'grava no registro',
-   porque:'o registro durável é um arquivo, e ele se escreve no terminal.',
-   linha:'iachat-comando decidi --porque "<o motivo>" "<a decisão>"'},
+  {cmd:'/goal',     desc:'Enunciar o objetivo da rodada',                quem:'ninguém executa',    pronto:true},
+  {cmd:'/plan',     desc:'A frota ativa planeja junta e devolve o plano', quem:'todas as IAs vivas', pronto:true},
+  {cmd:'/concluir', desc:'Autorizar: pode aplicar',                      quem:'quem foi designado', pronto:true},
+  {cmd:'/parar',    desc:'Abortar a missão em andamento',                quem:'o servidor',         pronto:false},
+  {cmd:'/quem',     desc:'Quem está vivo, no quê, há quanto tempo',      quem:'ia-roster',          pronto:false},
+  {cmd:'/decidi',   desc:'Registrar decisão que todas obedecem',         quem:'ia-decide',          pronto:false},
+  {cmd:'/refaz',    desc:'Redisparar worker morto de onde parou',        quem:'o servidor',         pronto:false},
 ];
-const ONDE = {
-  sala:     {rotulo:'vai para a sala', vindouro:'nao'},
-  aqui:     {rotulo:'responde aqui',   vindouro:'nao'},
-  terminal: {rotulo:'só no terminal',  vindouro:'sim'},
-};
-/* O comando é a PRIMEIRA palavra, e só. `/parar` não casa `/parardetudo`, e
-   texto que apenas cita `/parar` no meio da frase continua sendo conversa. */
-const cmdDe = txt => COMANDOS.find(c => txt === c.cmd || txt.startsWith(c.cmd + ' '));
 
 const $  = (s,r=document)=>r.querySelector(s);
 const $$ = (s,r=document)=>[...r.querySelectorAll(s)];
@@ -392,26 +358,18 @@ function atualizaDestino(){
    `aria-activedescendant`. Fechada, o campo volta a ser um textarea comum: quem
    escreve na sala não deve ouvir "caixa combinada" o tempo todo. */
 let paletaIdx = 0;
-/* A paleta tem dois modos e eles não se misturam: `lista` é o combobox de
-   comandos (setas navegam, Enter escolhe); `painel` é a RESPOSTA — o resultado
-   do `/quem` ou a linha do terminal. No painel não há opção para navegar, e as
-   setas não podem fingir que há. */
-let paletaModo = 'lista';
 function abrePaleta(prefixo){
   const itens = COMANDOS.filter(c => c.cmd.startsWith(prefixo));
   if (!itens.length) return fechaPaleta();
   paletaIdx = 0;
-  paletaModo = 'lista';
-  E.paleta.setAttribute('role', 'listbox');
-  E.paleta.removeAttribute('aria-label');
   E.paleta.hidden = false;
   E.paleta.innerHTML = itens.map((c,i)=>`
     <button type="button" class="paleta-item" role="option" tabindex="-1"
             id="cmd-${c.cmd.slice(1)}" data-cmd="${c.cmd}"
-            data-vindouro="${ONDE[c.onde].vindouro}" aria-selected="${i===0}">
+            data-vindouro="${c.pronto?'nao':'sim'}" aria-selected="${i===0}">
       <span class="paleta-cmd" translate="no">${c.cmd}</span>
-      <span class="paleta-desc">${esc(c.desc)}</span>
-      <span class="paleta-quem">${ONDE[c.onde].rotulo}</span>
+      <span class="paleta-desc">${c.desc}</span>
+      <span class="paleta-quem">${c.pronto ? c.quem : 'a implementar'}</span>
     </button>`).join('');
   $$('.paleta-item', E.paleta).forEach(b=>
     b.addEventListener('click', ()=> escolhePaleta(b.dataset.cmd)));

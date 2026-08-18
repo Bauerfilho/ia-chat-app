@@ -24,6 +24,7 @@ import base64
 import secrets
 import select
 import socket
+import subprocess
 import sys
 import threading
 import time
@@ -37,6 +38,38 @@ import iachat_core as core  # noqa: E402
 
 UI = Path(__file__).resolve().parent
 CFG = {"escrever": False, "papel": "bauer", "token": ""}
+
+# — os comandos do dono que ATRAVESSAM o servidor ————————————————————————
+#
+# A allowlist é FECHADA e tem exatamente um item, porque a régua é: **leitura
+# atravessa, destruição não**. `quem` lê estado e devolve texto; `parar` mata
+# processo e `refaz` gasta assinatura do dono.
+#
+# `parar` e `refaz` não atravessam NEM de 127.0.0.1, e o motivo está escrito
+# vinte linhas abaixo, em `_ok_token`: com o servidor na loopback apareceu na sala
+# uma mensagem assinada `bauer` que ninguém escreveu. Loopback protege da REDE,
+# não desta MÁQUINA — várias IAs rodam aqui e todas a alcançam. Some-se que o
+# token dura 86400 s e também viaja na URL (`?t=`), logo vai parar em histórico
+# de shell, log e captura de tela. Um token vazado que posta mensagem se retrata;
+# um que mata a frota do dono no meio de uma onda, não.
+#
+# Há ainda uma assimetria que não é de rede: o `parar` só é seguro porque confere
+# o instante de nascimento do processo e a marca do worker NO INSTANTE do kill.
+# Uma interface insere uma pausa humana entre ler a lista e apertar o botão — que
+# é exatamente a janela em que um PID é reciclado. A prova vive no CLI, no ato.
+#
+# O ganho de ligar `parar` aqui seria de segundos; a frota é despachada do
+# terminal de qualquer maneira. O prejuízo não tem desfazer.
+#
+# COMO A ROTA É CONSTRUÍDA: o valor é uma TUPLA DE ARGUMENTOS constante. Não há
+# `shell=True`, não há string concatenada, e o cliente não escolhe o comando nem
+# um argumento sequer — nem sub-rota, nem `--run`, nem caminho. Ele só escolhe SE
+# chama. Texto de usuário nunca entra na linha de comando.
+IACHAT_COMANDO = Path.home() / "Projetos" / "ia-chat" / "bin" / "iachat-comando"
+COMANDOS_HTTP: dict[str, tuple[str, ...]] = {"quem": ("quem", "--json")}
+# Teto de tempo: o `quem` varre a tabela de processos. Se travar, a thread do
+# servidor fica presa e a vaga não volta — o mesmo problema do SSE sem teto.
+TETO_COMANDO_S = 8
 
 # O favicon viaja DENTRO deste arquivo, em base64, e não como um arquivo ao lado.
 # Motivo medido, não estético: `montar.sh` copia para o bundle uma lista fixa de
@@ -249,9 +282,49 @@ class Sala(BaseHTTPRequestHandler):
                                "msgs": msgs_desde(desde), "sala": sala()})
         if u.path == "/api/stream":
             return self._stream(int((q.get("desde") or ["0"])[0]))
+        # UMA rota por comando permitido, com o nome CRAVADO no código. Não existe
+        # `/api/comando?nome=…`: uma rota paramétrica convidaria o cliente a
+        # escolher o que roda, e a allowlist viraria a última linha de defesa em
+        # vez da única porta. `q` nem é lido aqui.
+        if u.path == "/api/quem":
+            return self._comando("quem")
         if u.path.count("/") == 1 and u.path[1:]:
             return self._estatico(u.path[1:])
         self._json({"erro": "rota inexistente"}, 404)
+
+    def _comando(self, nome: str):
+        """Roda UM comando da allowlist e devolve o JSON dele. Nada do cliente entra.
+
+        `parar` e `refaz` não têm rota — e se um dia alguém acrescentar o nome aqui
+        sem acrescentar em `COMANDOS_HTTP`, o pedido morre neste `if`, não no shell.
+        """
+        argv = COMANDOS_HTTP.get(nome)
+        if argv is None:
+            return self._json(
+                {"erro": f"'{nome}' não atravessa o servidor — só no terminal"}, 403)
+        if not IACHAT_COMANDO.is_file():
+            # 501 e não 500: não é defeito, é ausência. A interface usa esta resposta
+            # para mostrar a linha do terminal em vez de um erro sem saída.
+            return self._json(
+                {"erro": "iachat-comando não está instalado nesta máquina",
+                 "linha": f"iachat-comando {argv[0]}"}, 501)
+        try:
+            r = subprocess.run(
+                [sys.executable, str(IACHAT_COMANDO), *argv],
+                capture_output=True, text=True, timeout=TETO_COMANDO_S,
+                env={**os.environ, "IACHAT_HOME": str(core.home())},
+            )
+        except subprocess.TimeoutExpired:
+            return self._json({"erro": f"o comando passou de {TETO_COMANDO_S}s"}, 504)
+        except OSError as e:
+            return self._json({"erro": f"não consegui rodar: {e}"}, 500)
+        if r.returncode != 0:
+            return self._json(
+                {"erro": (r.stderr or "o comando falhou").strip()[:400]}, 500)
+        try:
+            return self._json(json.loads(r.stdout))
+        except json.JSONDecodeError:
+            return self._json({"erro": "o comando não devolveu JSON"}, 500)
 
     def _stream(self, desde: int):
         with _SSE_TRAVA:

@@ -14,16 +14,50 @@
 const IAS = ['claude','codex','kimi','agy','grok','qwen','ollama','deepseek','dourada','bauer'];
 const DONO = 'bauer';
 
-/* ── comandos do dono ────────────────────────────────────────────────────── */
+/* ── comandos do dono ──────────────────────────────────────────────────────
+   `onde` diz ONDE o comando age, e a paleta MOSTRA isso. Antes havia
+   `pronto:true/false`, e ele mentia dos dois lados: nenhum dos sete chegava a
+   `bin/iachat-comando` — os sete viravam mensagem de chat —, e ainda assim
+   `/plan` anunciava "todas as IAs vivas" e `/concluir` "quem foi designado",
+   insinuando execução que não existia. Os `false` não diziam o que fazer;
+   apareciam na tela e calavam. Comando morto na tela é pior que comando ausente.
+
+     sala     — vira mensagem na sala, e as IAs leem e agem. Não é consolo: é o
+                mecanismo para o qual a sala foi construída.
+     aqui     — atravessa o servidor e responde aqui mesmo. Só LEITURA.
+     terminal — NÃO atravessa. Mata processo ou gasta assinatura do dono, e a
+                paleta entrega a linha pronta para copiar em vez de fingir.
+
+   Por que `terminal` e não uma rota: o servidor roda com `--lan`, e mesmo sem
+   ele a loopback não é fronteira de confiança nesta máquina (ver o comentário
+   de `_ok_token` em `servir.py`: com 127.0.0.1 apareceu na sala uma mensagem
+   assinada `bauer` que ninguém escreveu). Um token vazado que posta mensagem se
+   retrata; um que mata a frota no meio de uma onda, não.
+
+   `/decidi` é `terminal` e não `sala` de propósito: postado como mensagem ele
+   NÃO entra em `decisoes.md`, e uma decisão que existe na sala mas não no
+   registro é a dívida dos dois instrumentos de volta, só que de roupa nova. */
 const COMANDOS = [
-  {cmd:'/goal',     desc:'Enunciar o objetivo da rodada',                quem:'ninguém executa',    pronto:true},
-  {cmd:'/plan',     desc:'A frota ativa planeja junta e devolve o plano', quem:'todas as IAs vivas', pronto:true},
-  {cmd:'/concluir', desc:'Autorizar: pode aplicar',                      quem:'quem foi designado', pronto:true},
-  {cmd:'/parar',    desc:'Abortar a missão em andamento',                quem:'o servidor',         pronto:false},
-  {cmd:'/quem',     desc:'Quem está vivo, no quê, há quanto tempo',      quem:'ia-roster',          pronto:false},
-  {cmd:'/decidi',   desc:'Registrar decisão que todas obedecem',         quem:'ia-decide',          pronto:false},
-  {cmd:'/refaz',    desc:'Redisparar worker morto de onde parou',        quem:'o servidor',         pronto:false},
+  {cmd:'/goal',     desc:'Enunciar o objetivo da rodada',                 onde:'sala',     quem:'ninguém executa — é o enunciado'},
+  {cmd:'/plan',     desc:'A frota ativa planeja junta e devolve o plano', onde:'sala',     quem:'as IAs da sala leem e agem'},
+  {cmd:'/concluir', desc:'Autorizar: pode aplicar',                       onde:'sala',     quem:'quem foi designado no plano'},
+  {cmd:'/quem',     desc:'Quem está vivo, no quê, há quanto tempo',       onde:'aqui',     quem:'lê o estado e responde aqui'},
+  {cmd:'/parar',    desc:'Abortar a missão em andamento',                 onde:'terminal', quem:'mata processo',
+   porque:'mata processo, e matar não tem desfazer.', linha:'iachat-comando parar'},
+  {cmd:'/refaz',    desc:'Redisparar worker morto de onde parou',         onde:'terminal', quem:'gasta assinatura',
+   porque:'redispara uma IA paga, e isso gasta a assinatura dele.', linha:'iachat-comando refaz --ia <ia>'},
+  {cmd:'/decidi',   desc:'Registrar decisão que todas obedecem',          onde:'terminal', quem:'grava no registro',
+   porque:'o registro durável é um arquivo, e ele se escreve no terminal.',
+   linha:'iachat-comando decidi --porque "<o motivo>" "<a decisão>"'},
 ];
+const ONDE = {
+  sala:     {rotulo:'vai para a sala', vindouro:'nao'},
+  aqui:     {rotulo:'responde aqui',   vindouro:'nao'},
+  terminal: {rotulo:'só no terminal',  vindouro:'sim'},
+};
+/* O comando é a PRIMEIRA palavra, e só. `/parar` não casa `/parardetudo`, e
+   texto que apenas cita `/parar` no meio da frase continua sendo conversa. */
+const cmdDe = txt => COMANDOS.find(c => txt === c.cmd || txt.startsWith(c.cmd + ' '));
 
 const $  = (s,r=document)=>r.querySelector(s);
 const $$ = (s,r=document)=>[...r.querySelectorAll(s)];
@@ -40,6 +74,7 @@ const E = {
 const S = {
   msgs:[], ultima:0, sala:{na_sala:[],escrever:false,papel:DONO},
   naSala:[], sinos:{}, colado:true, novas:0, filtro:'', fio:null, fonte:null,
+  ativa:null,   // nº da mensagem escolhida dentro do log, para o teclado
 };
 
 /* ── utilidades ──────────────────────────────────────────────────────────── */
@@ -123,6 +158,7 @@ function noMsg(m, atraso=0){
   art.style.setProperty('--ia-t', `var(--${corDe(m.de)}-t)`);
   art.style.animationDelay = atraso + 'ms';
   art.dataset.n = m.n;
+  art.id = 'msg-' + m.n;   // alvo do aria-activedescendant do log
   art.innerHTML = `
     <div class="msg-cabeca">
       <span class="msg-de">${esc(m.de)}</span>
@@ -132,9 +168,9 @@ function noMsg(m, atraso=0){
     </div>
     <div class="msg-corpo">${corpoHTML(m.texto)}</div>
     <div class="msg-pe">
-      <button type="button" class="msg-acao" data-acao="fio">ver o fio</button>
-      <button type="button" class="msg-acao" data-acao="responder">responder a ${esc(m.de)}</button>
-      <button type="button" class="msg-acao" data-acao="copiar">copiar</button>
+      <button type="button" class="msg-acao" tabindex="-1" data-acao="fio">ver o fio</button>
+      <button type="button" class="msg-acao" tabindex="-1" data-acao="responder">responder a ${esc(m.de)}</button>
+      <button type="button" class="msg-acao" tabindex="-1" data-acao="copiar">copiar</button>
     </div>`;
   return art;
 }
@@ -150,6 +186,9 @@ function desenhaMsgs(){
     ? S.msgs.filter(m => (m.texto+' '+m.de).toLowerCase().includes(S.filtro))
     : S.msgs;
   E.vazio.hidden = lista.length > 0;
+  // `aria-busy` enquanto a lista é refeita: sem isto, filtrar a busca recria 31 nós
+  // dentro de uma região viva e o leitor de tela lê a sala inteira de novo.
+  E.fio.setAttribute('aria-busy', 'true');
   E.fio.replaceChildren();
   let diaAtual = '';
   const frag = document.createDocumentFragment();
@@ -160,6 +199,11 @@ function desenhaMsgs(){
   });
   E.fio.append(frag);
   E.fio.dataset.dia = diaAtual;
+  E.fio.setAttribute('aria-busy', 'false');
+  // a mensagem escolhida pode ter saído do filtro
+  if (S.ativa && !E.fio.querySelector(`[data-n="${S.ativa}"]`)){
+    S.ativa = null; E.fio.removeAttribute('aria-activedescendant');
+  } else if (S.ativa) mensagemAtiva(S.ativa);
 }
 
 /** mensagem nova: anexa só ela. A lista não é redesenhada a cada evento. */
@@ -218,19 +262,43 @@ function desenhaFio(){
   });
 }
 
+/* ⚠️ MEDIDO 18/08 na sala real: a regra antiga desta aba procurava o COMANDO
+   `/decidi` (ou `/concluir`) no texto — e ele aparece **0 vezes** em 29
+   mensagens, então a aba estava condenada a nascer vazia. `/decidi` nem existe
+   ainda: está como `pronto:false` na lista COMANDOS aqui em cima.
+   O que a sala usa de verdade é o MARCADOR no começo da linha, e é isso que o
+   `bin/iachat-report` (RE_MARCA) extrai — 8 marcações em 2 mensagens (#26, #29).
+   Esta regra é a mesma dele, byte a byte no conjunto de marcadores: uma
+   mensagem pode carregar várias, e cada uma vira um cartão. */
+const MARCAS = ['DECIDIDO','PENDENTE','BLOQUEIO','PERGUNTA'];
+const RE_MARCA = new RegExp(
+  '^[ \\t]*(?:[*_]{0,2})(' + MARCAS.join('|') + ')(?:[*_]{0,2})[ \\t]*:[ \\t]*(.+)$', 'i');
+function marcacoesDe(txt){
+  const fora = [];
+  for (const linha of String(txt||'').split('\n')){
+    const m = RE_MARCA.exec(linha);
+    if (m) fora.push({marca:m[1].toUpperCase(), corpo:m[2].trim()});
+  }
+  return fora;
+}
+
 function desenhaDecisoes(){
   const el = $('#decisoes');
-  const achadas = S.msgs.filter(m => /(^|\s)\/(decidi|concluir)\b/i.test(m.texto));
-  el.innerHTML = achadas.length ? '' :
-    '<li class="nada">Nenhuma decisão registrada ainda.</li>';
-  achadas.reverse().forEach(m=>{
+  const itens = [];
+  [...S.msgs].reverse().forEach(m =>                       // mensagem mais nova primeiro,
+    marcacoesDe(m.texto).forEach(x =>                      // ordem interna preservada
+      itens.push({...x, de:m.de, n:m.n, ts:m.ts})));
+  el.innerHTML = itens.length ? '' :
+    '<li class="nada">Nada marcado ainda. Comece uma linha com <code translate="no">DECIDIDO:</code> — também valem PENDENTE:, BLOQUEIO: e PERGUNTA:.</li>';
+  itens.forEach(x=>{
     const li = document.createElement('li');
     li.className = 'cartao';
-    li.style.setProperty('--ia-t', `var(--${corDe(m.de)}-t)`);
-    li.innerHTML = `<div class="decisao-txt">${corpoHTML(m.texto.replace(/^\s*\/\w+\s*/,''))}</div>
-      <div class="decisao-pe"><span class="selo-ia">${esc(m.de)}</span>
-      <span>·</span><span>#${m.n} · há ${haQuanto(m.ts)}</span></div>`;
-    li.addEventListener('click', ()=> irPara(m.n));
+    li.dataset.marca = x.marca;
+    li.style.setProperty('--ia-t', `var(--${corDe(x.de)}-t)`);
+    li.innerHTML = `<div class="decisao-txt"><span class="marca-selo">${esc(x.marca)}</span>${corpoHTML(x.corpo)}</div>
+      <div class="decisao-pe"><span class="selo-ia">${esc(x.de)}</span>
+      <span>·</span><span>#${x.n} · há ${haQuanto(x.ts)}</span></div>`;
+    li.addEventListener('click', ()=> irPara(x.n));
     el.append(li);
   });
 }
@@ -259,6 +327,13 @@ function desenhaDia(){
   });
 }
 
+/* Esta aba NÃO mostra reserva de `ia-claim` — mostra arquivo CITADO na sala,
+   derivado do texto das mensagens. A reserva de verdade vive em
+   `$IACHAT_HOME/claims/*.json` e não trafega por nenhuma rota do servidor
+   (`/api/estado`, `/api/sala`, `/api/stream` são as três que existem), então a
+   interface não tem como saber dela. Conferido em 18/08: a pasta `claims/` nem
+   existe ainda. O título e a nota do painel dizem isso — a aba não promete
+   reserva e entrega citação. */
 function desenhaReservas(){
   const el = $('#reservas');
   const mapa = new Map();
@@ -272,7 +347,7 @@ function desenhaReservas(){
     li.className = 'reserva';
     li.style.setProperty('--ia-t', `var(--${corDe(quem)}-t)`);
     li.innerHTML = `<span class="reserva-arq" title="${esc(arq)}">${esc(arq)}</span>
-                    <span class="reserva-quem">${esc(quem)}</span>`;
+                    <span class="reserva-quem" title="última menção">${esc(quem)}</span>`;
     el.append(li);
   });
 }
@@ -311,25 +386,60 @@ function atualizaDestino(){
 }
 
 /* ── paleta de comandos ──────────────────────────────────────────────────── */
+/* O foco fica no campo de texto enquanto a paleta está aberta — é o que permite
+   continuar digitando. Para o leitor de tela saber qual comando está sob as setas,
+   o campo vira `combobox` ENQUANTO a paleta existe e aponta a opção ativa por
+   `aria-activedescendant`. Fechada, o campo volta a ser um textarea comum: quem
+   escreve na sala não deve ouvir "caixa combinada" o tempo todo. */
 let paletaIdx = 0;
+/* A paleta tem dois modos e eles não se misturam: `lista` é o combobox de
+   comandos (setas navegam, Enter escolhe); `painel` é a RESPOSTA — o resultado
+   do `/quem` ou a linha do terminal. No painel não há opção para navegar, e as
+   setas não podem fingir que há. */
+let paletaModo = 'lista';
 function abrePaleta(prefixo){
   const itens = COMANDOS.filter(c => c.cmd.startsWith(prefixo));
-  if (!itens.length){ E.paleta.hidden = true; return; }
+  if (!itens.length) return fechaPaleta();
   paletaIdx = 0;
+  paletaModo = 'lista';
+  E.paleta.setAttribute('role', 'listbox');
+  E.paleta.removeAttribute('aria-label');
   E.paleta.hidden = false;
   E.paleta.innerHTML = itens.map((c,i)=>`
-    <button type="button" class="paleta-item" role="option" data-cmd="${c.cmd}"
-            data-vindouro="${c.pronto?'nao':'sim'}" aria-selected="${i===0}">
+    <button type="button" class="paleta-item" role="option" tabindex="-1"
+            id="cmd-${c.cmd.slice(1)}" data-cmd="${c.cmd}"
+            data-vindouro="${ONDE[c.onde].vindouro}" aria-selected="${i===0}">
       <span class="paleta-cmd" translate="no">${c.cmd}</span>
-      <span class="paleta-desc">${c.desc}</span>
-      <span class="paleta-quem">${c.pronto ? c.quem : 'a implementar'}</span>
+      <span class="paleta-desc">${esc(c.desc)}</span>
+      <span class="paleta-quem">${ONDE[c.onde].rotulo}</span>
     </button>`).join('');
   $$('.paleta-item', E.paleta).forEach(b=>
     b.addEventListener('click', ()=> escolhePaleta(b.dataset.cmd)));
+  E.texto.setAttribute('role', 'combobox');
+  E.texto.setAttribute('aria-expanded', 'true');
+  E.texto.setAttribute('aria-controls', 'paleta');
+  E.texto.setAttribute('aria-autocomplete', 'list');
+  marcaPaleta();
+}
+function fechaPaleta(){
+  E.paleta.hidden = true;
+  E.texto.removeAttribute('role');
+  E.texto.removeAttribute('aria-expanded');
+  E.texto.removeAttribute('aria-controls');
+  E.texto.removeAttribute('aria-autocomplete');
+  E.texto.removeAttribute('aria-activedescendant');
+}
+function marcaPaleta(){
+  const itens = $$('.paleta-item', E.paleta);
+  itens.forEach((b,i)=> b.setAttribute('aria-selected', String(i === paletaIdx)));
+  const sel = itens[paletaIdx];
+  if (!sel) return;
+  E.texto.setAttribute('aria-activedescendant', sel.id);
+  sel.scrollIntoView({block:'nearest'});
 }
 function escolhePaleta(cmd){
   E.texto.value = cmd + ' ';
-  E.paleta.hidden = true;
+  fechaPaleta();
   E.texto.focus();
   ajustaAltura(); atualizaDestino();
 }
@@ -337,9 +447,55 @@ function navegaPaleta(passo){
   const itens = $$('.paleta-item', E.paleta);
   if (!itens.length) return;
   paletaIdx = (paletaIdx + passo + itens.length) % itens.length;
-  itens.forEach((b,i)=> b.setAttribute('aria-selected', i===paletaIdx));
-  itens[paletaIdx].scrollIntoView({block:'nearest'});
+  marcaPaleta();
 }
+
+/* ── o log é UMA parada de Tab ────────────────────────────────────────────
+   Três botões por mensagem davam 93 paradas antes do campo de escrita, com 31
+   mensagens — e a sala cresce até 200 KB. Aqui o `#fio` é o ponto de entrada:
+   ↑↓ escolhem a mensagem (marcada por `aria-activedescendant`, que é como um
+   leitor de tela sabe onde está sem o foco sair do log), e só as ações DELA
+   entram no Tab. As ações continuam alcançáveis; deixam de ser um pedágio. */
+function mensagemAtiva(n){
+  $$('.msg', E.fio).forEach(el=>{
+    const ativa = Number(el.dataset.n) === n;
+    el.classList.toggle('msg--ativa', ativa);
+    $$('.msg-acao', el).forEach(b => b.tabIndex = ativa ? 0 : -1);
+  });
+  const el = E.fio.querySelector(`[data-n="${n}"]`);
+  if (!el) return;
+  S.ativa = n;
+  E.fio.setAttribute('aria-activedescendant', el.id);
+  el.scrollIntoView({block:'nearest'});
+}
+
+function andaMensagem(passo){
+  const ns = $$('.msg', E.fio).map(el => Number(el.dataset.n));
+  if (!ns.length) return;
+  const i = ns.indexOf(S.ativa);
+  if (i === -1) return mensagemAtiva(passo > 0 ? ns[0] : ns[ns.length - 1]);
+  mensagemAtiva(ns[Math.min(ns.length - 1, Math.max(0, i + passo))]);
+}
+
+E.fio.addEventListener('keydown', ev=>{
+  const teclas = {ArrowDown:1, ArrowUp:-1, PageDown:5, PageUp:-5};
+  if (ev.key in teclas){ ev.preventDefault(); return andaMensagem(teclas[ev.key]); }
+  if (ev.key === 'Home' || ev.key === 'End'){
+    ev.preventDefault();
+    const ns = $$('.msg', E.fio).map(el => Number(el.dataset.n));
+    if (ns.length) mensagemAtiva(ev.key === 'Home' ? ns[0] : ns[ns.length - 1]);
+    return;
+  }
+  if (ev.key === 'Enter' && S.ativa){
+    ev.preventDefault(); S.fio = S.ativa; desenhaFio(); abreAba('fio'); abreGaveta(true);
+  }
+});
+// entrar no log sem mensagem escolhida: começa pela última, que é a que importa
+E.fio.addEventListener('focus', ()=>{
+  if (S.ativa && E.fio.querySelector(`[data-n="${S.ativa}"]`)) return;
+  const ns = $$('.msg', E.fio).map(el => Number(el.dataset.n));
+  if (ns.length) mensagemAtiva(ns[ns.length - 1]);
+});
 
 /* ── rolagem: a sala NÃO pula sozinha (bug conhecido do painel) ──────────── */
 function perto(){ return E.sala.scrollHeight - E.sala.scrollTop - E.sala.clientHeight < 120; }
@@ -423,7 +579,7 @@ async function envia(){
     const d = await r.json();
     if (!r.ok || d.erro) throw new Error(d.erro || ('HTTP '+r.status));
     E.texto.value = ''; ajustaAltura(); atualizaDestino();
-    E.paleta.hidden = true; S.colado = true;
+    fechaPaleta(); S.colado = true;
   }catch(e){
     avisa('Não enviei: ' + esc(e.message) + '. <b>O texto continua no campo.</b>','erro');
   }finally{
@@ -438,14 +594,14 @@ E.texto.addEventListener('input', ()=>{
   ajustaAltura(); atualizaDestino();
   E.conta.textContent = fmtNum.format(E.texto.value.length);
   const v = E.texto.value;
-  if (/^\/\w*$/.test(v)) abrePaleta(v); else E.paleta.hidden = true;
+  if (/^\/\w*$/.test(v)) abrePaleta(v); else fechaPaleta();
 });
 
 E.texto.addEventListener('keydown', ev=>{
   if (!E.paleta.hidden){
     if (ev.key === 'ArrowDown'){ ev.preventDefault(); return navegaPaleta(1); }
     if (ev.key === 'ArrowUp'){ ev.preventDefault(); return navegaPaleta(-1); }
-    if (ev.key === 'Escape'){ ev.preventDefault(); E.paleta.hidden = true; return; }
+    if (ev.key === 'Escape'){ ev.preventDefault(); fechaPaleta(); return; }
     if (ev.key === 'Enter' || ev.key === 'Tab'){
       const sel = $$('.paleta-item', E.paleta)[paletaIdx];
       if (sel){ ev.preventDefault(); return escolhePaleta(sel.dataset.cmd); }
@@ -484,20 +640,29 @@ E.sala.addEventListener('scroll', ()=>{
 });
 E.descer.addEventListener('click', ()=> desce());
 
+/* Roving tabindex: o conjunto de abas é UMA parada de Tab, e as setas andam
+   entre elas — é o que o padrão ARIA de tablist exige. Antes eram quatro. */
 function abreAba(qual){
   $$('.aba').forEach(a=>{
     const ativo = a.dataset.pnl === qual;
-    a.setAttribute('aria-selected', ativo);
+    a.setAttribute('aria-selected', String(ativo));
+    a.tabIndex = ativo ? 0 : -1;
     $('#pnl-' + a.dataset.pnl).hidden = !ativo;
   });
 }
 $$('.aba').forEach(a=>{
   a.addEventListener('click', ()=> abreAba(a.dataset.pnl));
   a.addEventListener('keydown', ev=>{
-    if (ev.key !== 'ArrowRight' && ev.key !== 'ArrowLeft') return;
     const abas = $$('.aba'), i = abas.indexOf(a);
-    const alvo = abas[(i + (ev.key === 'ArrowRight' ? 1 : -1) + abas.length) % abas.length];
-    alvo.focus(); abreAba(alvo.dataset.pnl);
+    let j = null;
+    if (ev.key === 'ArrowRight') j = (i + 1) % abas.length;
+    else if (ev.key === 'ArrowLeft') j = (i - 1 + abas.length) % abas.length;
+    else if (ev.key === 'Home') j = 0;
+    else if (ev.key === 'End') j = abas.length - 1;
+    if (j === null) return;
+    ev.preventDefault();
+    abreAba(abas[j].dataset.pnl);
+    abas[j].focus();
   });
 });
 

@@ -263,8 +263,12 @@ code,kbd,.num{font-family:var(--mono); font-variant-numeric:tabular-nums}
   font-size:13.5px}
 #busca::placeholder{color:var(--tinta-3)}
 #busca:hover{border-color:var(--borda-forte)}
-#busca:focus{outline:none;border-color:var(--ouro-fio);background:var(--superf-alta);
-  box-shadow:0 0 0 3px var(--ouro-veu)}
+/* O anel do foco precisa ter contraste PRÓPRIO (WCAG 2.4.11): a 10% ele existia
+   no código e não existia no olho. Ouro sólido a 55% + borda opaca. */
+#busca:focus-visible{outline:none;border-color:var(--ouro);background:var(--superf-alta);
+  box-shadow:0 0 0 3px rgba(176,141,63,.55)}
+#busca:focus:not(:focus-visible){outline:none;border-color:var(--ouro-fio);
+  background:var(--superf-alta);box-shadow:0 0 0 3px var(--ouro-veu)}
 #busca::-webkit-search-cancel-button{-webkit-appearance:none}
 .busca-tecla{position:absolute;right:9px;top:50%;transform:translateY(-50%);
   font-size:10px;color:var(--tinta-3);border:1px solid var(--borda);
@@ -342,6 +346,17 @@ code,kbd,.num{font-family:var(--mono); font-variant-numeric:tabular-nums}
 .mencao--todas{color:var(--ouro-tinta);background:var(--superf-alta);border-color:var(--ouro-fio)}
 .msg--dono .mencao--todas{color:var(--ouro-brilho);background:rgba(212,178,95,.10);
   border-color:rgba(212,178,95,.38)}
+
+/* A mensagem escolhida pelas setas dentro do log. O foco fica no `#fio`, então o
+   realce precisa aparecer AQUI — senão o teclado anda às cegas. */
+.sala-fio:focus-visible{outline:none}
+.sala-fio:focus-visible .msg--ativa::before{opacity:1;width:3px;
+  background:linear-gradient(to bottom,var(--ia-t,var(--anonima-t)),var(--ouro))}
+.sala-fio:focus-visible .msg--ativa{background:var(--ouro-veu);
+  border-radius:var(--raio);box-shadow:0 0 0 1px var(--ouro-fio)}
+.sala-fio:focus-visible .msg--ativa.msg--dono{background:var(--carvao-800);
+  box-shadow:var(--sombra),inset 0 0 0 2px var(--ouro)}
+.msg--ativa .msg-pe{opacity:1;transform:none}
 
 .msg-pe{margin-top:7px;display:flex;gap:var(--u2);opacity:0;
   transform:translateY(-3px);
@@ -517,6 +532,17 @@ code,kbd,.num{font-family:var(--mono); font-variant-numeric:tabular-nums}
 .decisoes,.fio-lista,.linha,.reservas{list-style:none;margin:0;padding:0}
 .decisao-txt{font-size:13px;line-height:1.55}
 .decisao-txt strong{color:var(--ouro-tinta)}
+/* selo do marcador: a mesma família que o `ia-report` extrai (DECIDIDO, PENDENTE,
+   BLOQUEIO, PERGUNTA). Cada um na sua cor semântica — o cartão diz o que é antes
+   de ser lido. `float` para o texto correr ao lado sem mexer no corpoHTML. */
+.marca-selo{float:left;margin:2px var(--u) 0 0;padding:2px 7px;border-radius:var(--raio-p);
+  font:600 9.5px/1.4 var(--corpo);letter-spacing:.12em;
+  background:var(--ouro-veu);color:var(--ouro-tinta)}
+.cartao[data-marca="DECIDIDO"] .marca-selo{background:color-mix(in srgb,var(--ok) 14%,transparent);color:var(--ok)}
+.cartao[data-marca="PENDENTE"] .marca-selo{background:color-mix(in srgb,var(--atencao) 14%,transparent);color:var(--atencao)}
+.cartao[data-marca="BLOQUEIO"] .marca-selo{background:color-mix(in srgb,var(--erro) 14%,transparent);color:var(--erro)}
+.cartao[data-marca="PERGUNTA"] .marca-selo{background:color-mix(in srgb,var(--info) 14%,transparent);color:var(--info)}
+.decisao-txt::after{content:"";display:block;clear:both}
 .decisao-pe{margin-top:7px;display:flex;align-items:center;gap:var(--u);
   font-size:10.5px;color:var(--tinta-3)}
 .selo-ia{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;
