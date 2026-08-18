@@ -120,3 +120,7 @@ instalado deve ser fechado em si.
 | `IA_CHAT_REPO` | de onde clonar o motor |
 
 Log de cada sessão em `~/Library/Application Support/ia-chat-app/servidor.log`.
+
+## Licença
+
+MIT — veja [`LICENSE`](LICENSE). Use, modifique, publique; só mantenha o aviso.
