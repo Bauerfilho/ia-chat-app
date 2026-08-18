@@ -596,6 +596,28 @@ function elo(estado, texto){
   $('.elo-texto', E.elo).textContent = texto;
 }
 
+/* O token entra pela URL (`?t=…`) e o servidor semeia um cookie HttpOnly na primeira
+   visita. A URL, porém, ficava na barra — e quem abre no celular pelo QR normalmente
+   favorita ou põe na Tela de Início, o que **grava o segredo dentro do ícone**, visível
+   a quem pegar o aparelho e sobrevivendo a qualquer troca de token.
+
+   Só limpa depois de PROVAR que o cookie autentica sozinho: uma chamada sem `?t=`. Se
+   o cookie não tiver sido semeado (Safari em modo restrito, por exemplo), a URL fica
+   como está — perder o único meio de entrar seria trocar um vazamento por um bloqueio.
+   `TOKEN` já está em memória e continua indo nas chamadas: limpar a barra não desautentica
+   esta aba. Achado do worker `i1-celular` (`sala.js:82` repetia o token em toda API). */
+async function limpaTokenDaBarra(){
+  if (!TOKEN) return;
+  try{
+    const r = await fetch('/api/estado', {credentials:'same-origin'});
+    if (!r.ok) return;                       // sem cookie válido: a URL é o que resta
+    const limpa = new URL(location.href);
+    limpa.searchParams.delete('t');
+    history.replaceState(null, '', limpa.pathname + limpa.search + limpa.hash);
+  }catch(e){ /* rede instável não é motivo para mexer na barra */ }
+}
+
+
 async function carrega(){
   try{
     const r = await fetch(url('/api/sala','desde=0'));
@@ -611,6 +633,7 @@ async function carrega(){
     elo('viva', S.sala.escrever ? 'sala aberta' : 'somente leitura');
     if (!S.sala.escrever) E.enviar.disabled = true;
     abreFluxo();
+    limpaTokenDaBarra();
   }catch(e){
     elo('caiu','sem conexão');
     avisa('Não consegui ler a sala. <b>Confira se o servidor está no ar.</b>','erro');

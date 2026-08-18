@@ -382,11 +382,16 @@ class Sala(BaseHTTPRequestHandler):
         # form cross-site não consegue mudar o Origin nem forjar Sec-Fetch-Site.
         porta = self.server.server_address[1]
         origem = self.headers.get("Origin")
-        if origem and origem not in (
-            f"http://127.0.0.1:{porta}",
-            f"http://localhost:{porta}",
-            f"http://{_ip_local()}:{porta}",
-        ):
+        # TODAS as interfaces físicas, não só a primeira. `--lan` imprime uma URL por
+        # interface, e a allowlist aceitava apenas `_ip_local()` — o primeiro item da
+        # mesma lista. Numa máquina com Wi-Fi E Ethernet, quem abrisse a SEGUNDA URL
+        # impressa veria a sala carregar (GET não checa Origin) e tomaria 403 ao ENVIAR:
+        # o pior tipo de defeito, o que parece funcionar. Hoje só `en0` tem IP nesta
+        # máquina, então a armadilha está armada e não disparou. Achado do worker
+        # `i1-celular`, medido com `Origin: http://10.211.55.2:18931` → 403.
+        permitidas = {f"http://127.0.0.1:{porta}", f"http://localhost:{porta}"}
+        permitidas |= {f"http://{ip}:{porta}" for ip in _ips_lan()}
+        if origem and origem not in permitidas:
             return self._json({"erro": f"origem recusada: {origem}"}, 403)
         # Corpo sem teto esgota a memória do processo: 256 KB é folgado para uma
         # mensagem de sala e barato de recusar.
