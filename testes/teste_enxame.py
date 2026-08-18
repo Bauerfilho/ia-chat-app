@@ -253,6 +253,20 @@ def main() -> int:
         shutil.rmtree(enxame, ignore_errors=True)
 
     print()
+    print("— o modo do enxame é endereço, e entra por um lugar só —")
+    # A família dos deep-links: tema, aba, janela, abrir, swarm, remoto. O modo
+    # ficava de fora — quem mandava um link do painel neon chegava no dourado.
+    checa("M8: `?modo=` é lido da URL", "get('modo')" in JS)
+    checa("M8: só neon e dourado são aceitos",
+          "=== 'neon' || pedido === 'dourado'" in JS,
+          "nome desconhecido não pode apagar o modo atual")
+    checa("M8: um lugar só escreve o modo",
+          JS.count("dataset.enxameModo =") == 1,
+          "dois lugares escrevendo divergem no rótulo ou no aria-pressed — "
+          "foi o que aconteceu com os dois botões da gaveta hoje")
+    checa("M8: o botão e a URL passam pela mesma função",
+          "function poeModo" in JS and JS.count("poeModo(") >= 3)
+
     print(f"{_ok} ✔  {_falhou} ✗")
     return 1 if _falhou else 0
 

@@ -1846,12 +1846,25 @@ if (EX.raiz){
     if (tudo) EX_DOBRADOS.clear(); else for (const id of EX.runs) EX_DOBRADOS.add(id);
     exGravarDobra(); exTick();
   });
-  $('#ex-modo').addEventListener('click', e=>{
-    const on = document.documentElement.dataset.enxameModo !== 'neon';
-    document.documentElement.dataset.enxameModo = on ? 'neon' : 'dourado';
-    e.currentTarget.setAttribute('aria-pressed', String(on));
-    e.currentTarget.textContent = on ? 'modo dourado' : 'modo neon';
-  });
+  /* Um lugar só decide o modo, e o botão e a URL entram por ele. Duas funções
+     escrevendo o mesmo `data-enxame-modo` divergiriam no rótulo ou no
+     `aria-pressed` — foi o que aconteceu com os dois botões da gaveta hoje. */
+  function poeModo(neon){
+    const b = $('#ex-modo');
+    document.documentElement.dataset.enxameModo = neon ? 'neon' : 'dourado';
+    if (b){
+      b.setAttribute('aria-pressed', String(neon));
+      b.textContent = neon ? 'modo dourado' : 'modo neon';
+    }
+  }
+  $('#ex-modo').addEventListener('click', ()=>
+    poeModo(document.documentElement.dataset.enxameModo !== 'neon'));
+  /* `?modo=neon` fecha a família dos endereços: tema, aba, janela, abrir, swarm
+     e remoto já eram favoritáveis; o modo do enxame não era. Quem manda um link
+     do painel neon esperando ver neon chegava no dourado. Só dois valores; nome
+     desconhecido é ignorado, e o modo continua o que já estava. */
+  { const pedido = new URLSearchParams(location.search).get('modo');
+    if (pedido === 'neon' || pedido === 'dourado') poeModo(pedido === 'neon'); }
 }
 
 {

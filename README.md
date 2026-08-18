@@ -95,6 +95,23 @@ nova.*
 ![cópia congelada](docs/telas/07-copia-congelada-offline.png)
 *Sem servidor no ar, o app abre a cópia congelada da sala e avisa no selo.*
 
+## O enxame, na mesma casca
+
+Quando a frota está trabalhando, a mesma janela vira painel. Clique no **IASWARM**,
+no pé do trilho, e a sala dá lugar aos reatores: quantos swarms, quantos workers, o
+que está em curso, o que caiu.
+
+![iaswarm dourado](docs/telas/13-iaswarm-dourado.png)
+*Cada IA tem cor própria, e as barrinhas respiram no ritmo medido do braço — mais
+lentas quando ele silencia, paradas quando falha. Clicar no nome de uma IA abre o que
+ela está fazendo e a cauda do terminal dela. O painel mostra; não pilota — não há
+campo de digitar.*
+
+![modo neon](docs/telas/14-iaswarm-neon.png)
+*O mesmo painel em `?modo=neon`: a leitura é idêntica, o humor é outro. Tema, aba,
+janela, modo, swarm e worker são todos endereço — um link abre a tela exata que você
+quer mostrar a alguém.*
+
 ---
 
 ## Sem Electron, e isso é uma decisão
