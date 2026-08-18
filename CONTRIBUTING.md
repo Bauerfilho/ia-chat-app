@@ -32,10 +32,12 @@ Escolha uma porta livre dentro dela e **derrube o que subir**, inclusive quando 
 falha no meio:
 
 ```bash
-python3 -u ui/servir.py --porta 59900 &   # ou dentro do seu teste
+python3 -u ui/servir.py --porta 59900 &
 curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:59900/
 pkill -f "servir.py --porta 59900"
 ```
+
+- `python3 -u ui/servir.py --porta 59900 &` — ou dentro do seu teste
 
 Servidor esquecido vivo é a falha mais chata daqui: o teste seguinte encontra a porta
 ocupada e reprova por um motivo que não tem nada a ver com o que ele testa.
@@ -160,10 +162,14 @@ apresentação. O critério de projeto do ícone é o **16×16** — a regra e a
 em `marca/MARCA.md`, incluindo por que o ouro nunca encosta na palha sem leito preto.
 
 ```bash
-python3 marca/gerar_icone.py     # SVG + PNG + .icns + favicon.ico
-python3 marca/prova_16.py        # as provas, para olhar antes de aprovar
-bash montar.sh                   # sem isto o bundle continua com o ícone velho
+python3 marca/gerar_icone.py
+python3 marca/prova_16.py
+bash montar.sh
 ```
+
+- `python3 marca/gerar_icone.py` — SVG + PNG + .icns + favicon.ico
+- `python3 marca/prova_16.py` — as provas, para olhar antes de aprovar
+- `bash montar.sh` — sem isto o bundle continua com o ícone velho
 
 Trocou o favicon? O `.ico` também precisa ser reembutido em base64 no `ui/servir.py` —
 o procedimento está no comentário acima do bloco `FAVICON`, e o motivo está acima, na
@@ -179,7 +185,7 @@ armadilha do `montar.sh`.
    contribuidor), e `pgrep -f servir.py` acusa todos eles.
    ```bash
    lsof -ti :59900 || echo "livre"
-   ```
+```
 4. Nenhum `IACHAT_HOME` apontando para a sala real.
 5. Instalou para testar? Em pasta temporária — `IA_CHAT_DEST=$(mktemp -d) bash instalar-app.sh` —
    e apague depois. Nunca em `/Applications` para teste.
@@ -197,10 +203,14 @@ versão instalada, antiga. O diagnóstico apontava para a variável de ambiente,
 estava certa o tempo todo:
 
 ```bash
-launchctl getenv IACHAT_LAN                                   # → 1   (certo)
-grep -c IACHAT_LAN_FLAG /Applications/ia-chat.app/…/lancador.py   # → 0   (a causa)
-grep -c IACHAT_LAN_FLAG ./ia-chat.app/…/lancador.py               # → 2
+launchctl getenv IACHAT_LAN
+grep -c IACHAT_LAN_FLAG /Applications/ia-chat.app/…/lancador.py
+grep -c IACHAT_LAN_FLAG ./ia-chat.app/…/lancador.py
 ```
+
+- `launchctl getenv IACHAT_LAN` — → 1   (certo)
+- `grep -c IACHAT_LAN_FLAG /Applications/ia-cha…` — → 0   (a causa)
+- `grep -c IACHAT_LAN_FLAG ./ia-chat.app/…/lanc…` — → 2
 
 **A verificação que resolve em um segundo:** compare o bundle instalado com o do repo
 antes de acreditar em qualquer teste de comportamento do app.
