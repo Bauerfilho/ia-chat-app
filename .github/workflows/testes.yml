@@ -67,22 +67,50 @@ jobs:
       # bateria para no primeiro `checa("núcleo disponível")`. O clone tem de vir
       # com o nome exato `ia-chat`, que é o que a estrutura de pastas espera —
       # independente de como o repositório se chame no GitHub.
+      # `continue-on-error` para separar "o motor ainda não foi publicado" de "o motor
+      # existe e não veio". No primeiro push deste repo o irmão pode não estar no ar, e
+      # vermelho por ordem de publicação não mede qualidade — ensina a ignorar o selo.
       - name: o repositório irmão, ao lado
+        id: irmao
+        continue-on-error: true
         uses: actions/checkout@v4
         with:
           repository: ${{ env.REPO_IRMAO }}
           path: ia-chat
 
       - name: o núcleo está mesmo do lado
+        id: nucleo
         run: |
-          if [ ! -f "$GITHUB_WORKSPACE/ia-chat/bin/iachat_core.py" ]; then
-            echo "::error::$REPO_IRMAO não veio, ou veio sem bin/iachat_core.py. Sem o núcleo a bateria inteira é inconclusiva — parando aqui em vez de rodar 15 testes que só sabem dizer 'núcleo ausente'."
-            exit 1
+          if [ -f "$GITHUB_WORKSPACE/ia-chat/bin/iachat_core.py" ]; then
+            echo "· núcleo presente: $GITHUB_WORKSPACE/ia-chat/bin/iachat_core.py"
+            echo "tem=1" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
-          echo "· núcleo presente: $GITHUB_WORKSPACE/ia-chat/bin/iachat_core.py"
+          echo "tem=0" >> "$GITHUB_OUTPUT"
+          codigo="$(curl -s -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer ${{ github.token }}" \
+            "https://api.github.com/repos/$REPO_IRMAO")"
+          if [ "$codigo" = "404" ]; then
+            # NÃO finge verde: a bateria não roda, e o resumo diz isso em letras grandes.
+            # Diferente do repo do motor — lá a ausência do irmão só reduz a cobertura;
+            # aqui ela zera, porque todo teste importa `iachat_core`.
+            {
+              echo "## ⚠️ Bateria NÃO executada"
+              echo ""
+              echo "\`$REPO_IRMAO\` ainda não existe. Todo teste deste repositório importa"
+              echo "\`iachat_core\` — sem o motor não há o que medir, e um verde aqui seria"
+              echo "mentira. **Isto não é um teste que passou.**"
+              echo ""
+              echo "Publique o motor e rode de novo por \`workflow_dispatch\`."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning::$REPO_IRMAO ainda não existe — a bateria NÃO rodou. Este verde não é resultado de teste."
+            exit 0
+          fi
+          echo "::error::$REPO_IRMAO existe (HTTP $codigo) mas não veio para o workspace — permissão, nome ou rede."
+          exit 1
 
       - name: python moderno
-        if: matrix.interpretador == 'moderno'
+        if: steps.nucleo.outputs.tem == '1' && (matrix.interpretador == 'moderno')
         uses: actions/setup-python@v5
         with:
           python-version: '3.13'
@@ -92,6 +120,7 @@ jobs:
       # em `run:` vale mesmo quando a entrada é confiável — é o hábito que impede
       # o dia em que ela deixa de ser.
       - name: escolher o interpretador e dizer qual é
+        if: steps.nucleo.outputs.tem == '1'
         env:
           PERNA: ${{ matrix.interpretador }}
         run: |
@@ -113,10 +142,12 @@ jobs:
       # `ui/` ou `marca/` e esqueceu de sincronizar — em vez de testar uma cópia
       # velha e passar.
       - name: montar o bundle a partir das fontes
+        if: steps.nucleo.outputs.tem == '1'
         working-directory: ia-chat-app
         run: ./montar.sh
 
       - name: a bateria inteira
+        if: steps.nucleo.outputs.tem == '1'
         working-directory: ia-chat-app
         run: |
           set -u
@@ -199,7 +230,9 @@ jobs:
       # em algo, o commit está fora de sincronia com as fontes — e quem clonar o
       # repo leva um `.app` diferente do que o CI testou.
       - name: o bundle commitado está sincronizado com as fontes
-        if: always()
+        # `always()` para rodar mesmo com a bateria vermelha — mas só se houve
+        # bateria: sem o núcleo não há bundle montado para comparar.
+        if: always() && steps.nucleo.outputs.tem == '1'
         working-directory: ia-chat-app
         run: |
           if [ -n "$(git status --porcelain ia-chat.app)" ]; then

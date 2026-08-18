@@ -39,14 +39,16 @@ else
     ORIGEM="$(git -C "$RAIZ" remote get-url origin 2>/dev/null || true)"
     [ -n "$ORIGEM" ] && URL="$(printf '%s' "$ORIGEM" | sed 's#ia-chat-app#ia-chat#')"
   fi
+  # Quem baixa o ZIP do GitHub não tem `.git` nenhum — e era justamente essa pessoa
+  # que o instalador mandava embora, com uma mensagem que ainda por cima trazia
+  # `https://…/ia-chat.git`: RETICÊNCIAS literais, que quebram no copiar-e-colar.
+  # Derivar do irmão é ótimo quando há remoto; quando não há, o caminho de origem
+  # deste projeto é conhecido e vale mais que uma recusa.
+  # Achado do worker `codex` na missão m2 (`zip-precisa-instalar-sem-origin`).
   if [ -z "$URL" ]; then
-    cat >&2 <<'FIM'
-✗ não sei de onde clonar o ia-chat: este repo não tem remoto configurado.
-  Informe a origem e rode de novo:
-
-      IA_CHAT_REPO=https://…/ia-chat.git ./instalar-app.sh
-FIM
-    exit 1
+    URL="https://github.com/Bauerfilho/ia-chat"
+    echo "  (sem remoto git — provavelmente um ZIP; uso a origem conhecida)"
+    echo "  Outra origem?  IA_CHAT_REPO=https://github.com/SEU-USUARIO/ia-chat ./instalar-app.sh"
   fi
   echo "  git clone $URL  →  $SRC"
   mkdir -p "$(dirname "$SRC")"
