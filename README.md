@@ -107,7 +107,8 @@ instalado deve ser fechado em si.
 - **Enviar exige estar na sala.** O núcleo recusa post de quem não está em
   `na_sala` no `config.json`. Ler funciona desde o primeiro clique; enviar, só
   depois de você entrar — e entrar muda quem o `@all` chama, então é decisão sua,
-  não do instalador.
+  não do instalador. O comando é `iachat entrar <seu-nome>`, e ele confere a
+  infraestrutura junto: o código de saída distingue *entrou* de *entrou e vai receber*.
 
 ## Ajustes
 
