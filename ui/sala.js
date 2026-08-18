@@ -38,9 +38,25 @@ const DONO = 'bauer';
    NÃO entra em `decisoes.md`, e uma decisão que existe na sala mas não no
    registro é a dívida dos dois instrumentos de volta, só que de roupa nova. */
 const COMANDOS = [
-  {cmd:'/goal',     desc:'Enunciar o objetivo da rodada',                 onde:'sala',     quem:'ninguém executa — é o enunciado'},
-  {cmd:'/plan',     desc:'A frota ativa planeja junta e devolve o plano', onde:'sala',     quem:'as IAs da sala leem e agem'},
-  {cmd:'/concluir', desc:'Autorizar: pode aplicar',                       onde:'sala',     quem:'quem foi designado no plano'},
+  /* Os três eram `sala`, e isso os transformava em post de TEXTO: nenhum abria missão,
+     nenhum despachava a frota, nenhum gravava `comando/estado.json`. A paleta prometia
+     "as IAs da sala leem e agem" e o usuário saía achando que tinha aberto uma rodada —
+     sem PID para o `/parar` matar, sem plano para o `/concluir` autorizar.
+
+     O motivo de virarem `terminal` é o MESMO já escrito acima para o `/decidi`: postado
+     como mensagem, ele não entra no registro, e o que existe na sala mas não no registro
+     é a dívida dos dois instrumentos de volta. Missão sem `estado.json` é exatamente
+     isso. Achado do worker `j1-app-paralelo`, que resumiu bem: "é o `--lan` outra vez —
+     a mesma palavra, outro cano". */
+  {cmd:'/goal',     desc:'Enunciar o objetivo da rodada',                 onde:'terminal', quem:'abre a missão no disco',
+   porque:'a missão vive em `comando/estado.json`, e um post de texto não a cria.',
+   linha:'iachat-comando goal "<o objetivo>"'},
+  {cmd:'/plan',     desc:'A frota ativa planeja junta e devolve o plano', onde:'terminal', quem:'despacha a frota',
+   porque:'despacha processos pagos e grava o PID de cada um — nada disso cabe numa mensagem.',
+   linha:'iachat-comando plan'},
+  {cmd:'/concluir', desc:'Autorizar: pode aplicar',                       onde:'terminal', quem:'a única etapa que muda o mundo',
+   porque:'é a autorização para APLICAR, e ela recusa se não houver plano no disco.',
+   linha:'iachat-comando concluir'},
   {cmd:'/quem',     desc:'Quem está vivo, no quê, há quanto tempo',       onde:'aqui',     quem:'lê o estado e responde aqui'},
   {cmd:'/parar',    desc:'Abortar a missão em andamento',                 onde:'terminal', quem:'mata processo',
    porque:'mata processo, e matar não tem desfazer.', linha:'iachat-comando parar'},
