@@ -57,11 +57,18 @@ def main() -> int:
 
     print("— as abas seguem o padrão ARIA de tablist —")
     abas = re.findall(r'<button class="aba"[^>]*>', HTML)
-    checa("são quatro abas", len(abas) == 4, f"achei {len(abas)}")
+    # O NÚMERO de abas não é contrato de acessibilidade — o padrão é. A versão
+    # anterior cobrava `== 4` e `== 3`, e reprovou quando a gaveta ganhou a aba
+    # "Mapa": defeito nenhum, gate desatualizado. Quarta ocorrência desta classe em
+    # 18/08 (lista fixa de assets, mensagem literal do zsh, linha literal do foco).
+    # O que a norma exige é ROVING TABINDEX: exatamente uma parada de Tab, e todas as
+    # outras fora dela — verdade para 4 abas ou para 40.
+    checa("há abas na tablist", len(abas) >= 2, f"achei {len(abas)}")
     com_zero = [a for a in abas if 'tabindex="0"' in a]
     com_menos = [a for a in abas if 'tabindex="-1"' in a]
     checa("só uma aba é parada de Tab", len(com_zero) == 1, f"{len(com_zero)} com tabindex 0")
-    checa("as outras três saem do Tab", len(com_menos) == 3, f"{len(com_menos)} com tabindex -1")
+    checa("todas as outras saem do Tab", len(com_menos) == len(abas) - 1,
+          f"{len(com_menos)} com tabindex -1, de {len(abas)} abas")
     checa("a aba de Tab é a selecionada",
           bool(com_zero) and 'aria-selected="true"' in com_zero[0])
     checa("trocar de aba move o tabindex junto",

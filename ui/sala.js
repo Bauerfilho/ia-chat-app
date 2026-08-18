@@ -92,6 +92,7 @@ const E = {
   paleta:$('#paleta'), busca:$('#busca'), avisos:$('#avisos'),
   descer:$('#descer'), descerN:$('#descer-n'), moldura:$('.moldura'),
   veu:$('#veu-gaveta'), sino:$('#btn-sino'), sinoGlifo:$('#sino-glifo'),
+  mapa:$('#mapa'),
 };
 
 const S = {
@@ -1060,6 +1061,46 @@ E.descer.addEventListener('click', ()=> desce());
 
 /* Roving tabindex: o conjunto de abas é UMA parada de Tab, e as setas andam
    entre elas — é o que o padrão ARIA de tablist exige. Antes eram quatro. */
+/* ── o mapa de retomada ────────────────────────────────────────────────────
+   Busca SÓ quando a aba abre, e não a cada tick: o `caminho.md` muda em
+   compactação, não em mensagem. Puxá-lo no ciclo da sala seria pagar leitura de
+   disco a cada 2 s por um arquivo que passa horas parado. */
+let mapaCarregado = false;
+
+function tituloOuBloco(bloco){
+  const m = bloco.match(/^(#{1,3})\s+(.*)$/);
+  if (!m) return corpoHTML(bloco);
+  // Nível 1 é o título do próprio documento e já está no cabeçalho do painel —
+  // repetir daria dois títulos dizendo a mesma coisa.
+  const tag = m[1].length === 1 ? 'h3' : 'h4';
+  return `<${tag} class="mapa-sec">${esc(m[2])}</${tag}>`;
+}
+
+async function desenhaMapa(forcar){
+  if (!E.mapa || (mapaCarregado && !forcar)) return;
+  mapaCarregado = true;
+  E.mapa.innerHTML = '<p class="painel-nota">lendo…</p>';
+  try{
+    const r = await fetch(url('/api/mapa'), {cache:'no-store'});
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.erro || ('HTTP ' + r.status));
+    if (!d.existe){
+      E.mapa.innerHTML = `<p class="painel-nota">${esc(d.porque || 'sem mapa ainda.')}</p>`;
+      return;
+    }
+    const corpo = String(d.texto || '')
+      // O bloco de metadados YAML é para a máquina; quem lê quer o mapa.
+      .replace(/^---\n[\s\S]*?\n---\n/, '')
+      .split(/\n{2,}/).map(tituloOuBloco).join('');
+    E.mapa.innerHTML = corpo +
+      `<p class="painel-nota mapa-rodape">${esc(d.em)} · ${esc(bytesLegiveis(d.bytes))} · ` +
+      `<code translate="no">${esc(d.caminho)}</code></p>`;
+  }catch(e){
+    mapaCarregado = false;   // deixa tentar de novo na próxima abertura
+    E.mapa.innerHTML = `<p class="painel-nota">não consegui ler o mapa: ${esc(e.message)}</p>`;
+  }
+}
+
 function abreAba(qual){
   $$('.aba').forEach(a=>{
     const ativo = a.dataset.pnl === qual;
@@ -1067,6 +1108,7 @@ function abreAba(qual){
     a.tabIndex = ativo ? 0 : -1;
     $('#pnl-' + a.dataset.pnl).hidden = !ativo;
   });
+  if (qual === 'mapa') desenhaMapa(true);
 }
 $$('.aba').forEach(a=>{
   a.addEventListener('click', ()=> abreAba(a.dataset.pnl));

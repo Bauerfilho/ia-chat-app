@@ -382,9 +382,42 @@ class Sala(BaseHTTPRequestHandler):
             return self._iaswarm(q)
         if u.path == "/api/iaswarm/remoto":
             return self._iaswarm_remoto(q)
+        if u.path == "/api/mapa":
+            return self._mapa()
         if u.path.count("/") == 1 and u.path[1:]:
             return self._estatico(u.path[1:])
         self._json({"erro": "rota inexistente"}, 404)
+
+    def _mapa(self) -> None:
+        """O `caminho.md` — o mapa curto que a skill `ia-compactacao` grava.
+
+        O dono pediu que "esse documento possa ser aberto para minha leitura no app, se
+        possível a versão renderizada do Obsidian". Não embuti renderizador: a interface
+        já sabe desenhar markdown (`corpoHTML` em `sala.js`), e acrescentar um segundo
+        seria manter duas gramáticas que divergem no primeiro reparo.
+
+        LEITURA PURA e caminho CRAVADO: o cliente não escolhe arquivo. Um `?arq=` viraria
+        leitura arbitrária de disco pela rede — a sala roda com `--lan` e já foi publicada
+        por túnel hoje.
+        """
+        alvo = core.home() / "caminho.md"
+        if not alvo.is_file():
+            return self._json({
+                "existe": False,
+                "porque": "ainda não houve compactação nesta sala — o mapa nasce no "
+                          "PreCompact, ou por `ia-compactacao --mapa`.",
+            })
+        try:
+            texto = alvo.read_text(encoding="utf-8", errors="replace")
+        except OSError as e:
+            return self._json({"erro": f"não consegui ler o mapa: {e}"}, 500)
+        return self._json({
+            "existe": True,
+            "texto": texto,
+            "bytes": len(texto.encode()),
+            "em": time.strftime("%d/%m %H:%M", time.localtime(alvo.stat().st_mtime)),
+            "caminho": str(alvo),
+        })
 
     def _iaswarm_id(self, bruto: str) -> str | None:
         nome = (bruto or "").strip()
