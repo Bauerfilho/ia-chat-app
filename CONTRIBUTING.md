@@ -184,3 +184,31 @@ armadilha do `montar.sh`.
 5. Instalou para testar? Em pasta temporária — `IA_CHAT_DEST=$(mktemp -d) bash instalar-app.sh` —
    e apague depois. Nunca em `/Applications` para teste.
 6. Teste novo? Provado vermelho ao menos uma vez, de propósito.
+
+## Mexeu no lançador? `montar.sh` não basta
+
+`montar.sh` monta o bundle **dentro do repo**. `open -a ia-chat` abre o de
+**`/Applications`**. São dois arquivos diferentes, e só o `instalar-app.sh` copia um
+para o outro.
+
+Isso custou uma medição inteira em 18/08: uma mudança no `lancador.py` foi montada,
+testada com `open -a ia-chat`, e o app subiu **sem ela** — porque quem abriu foi a
+versão instalada, antiga. O diagnóstico apontava para a variável de ambiente, que
+estava certa o tempo todo:
+
+```bash
+launchctl getenv IACHAT_LAN                                   # → 1   (certo)
+grep -c IACHAT_LAN_FLAG /Applications/ia-chat.app/…/lancador.py   # → 0   (a causa)
+grep -c IACHAT_LAN_FLAG ./ia-chat.app/…/lancador.py               # → 2
+```
+
+**A verificação que resolve em um segundo:** compare o bundle instalado com o do repo
+antes de acreditar em qualquer teste de comportamento do app.
+
+```bash
+diff -r ia-chat.app/Contents/Resources /Applications/ia-chat.app/Contents/Resources
+```
+
+Diferente? `./instalar-app.sh` antes de testar. A bateria não pega isso: `teste_bundle.py`
+e `teste_lan_opt_in.py` leem o bundle **do repo**, que é o certo para eles — o defeito só
+existe no caminho que passa pelo Finder.

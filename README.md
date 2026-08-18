@@ -158,10 +158,30 @@ instalado deve ser fechado em si.
 | `IACHAT_SERVIDOR` | apontar outro servidor |
 | `IACHAT_CORE` | onde está o `iachat_core.py` |
 | `IACHAT_PAPEL` | com que nome você posta (padrão `bauer`) |
+| **`IACHAT_LAN=1`** | **servir também na rede local — é assim que o celular entra** |
 | `IA_CHAT_DEST` | onde instalar o `.app` |
 | `IA_CHAT_REPO` | de onde clonar o motor |
 
 Log de cada sessão em `~/Library/Application Support/ia-chat-app/servidor.log`.
+
+### Abrir no celular
+
+Por padrão o app serve só nesta máquina, e o telefone não o alcança. Ligue a rede local
+e abra de novo:
+
+```bash
+launchctl setenv IACHAT_LAN 1 && open -a ia-chat
+```
+
+O log passa a trazer uma linha `→ http://192.168.x.x:PORTA/?t=…` por interface física.
+Essa é a URL do celular — mande por AirDrop e toque nela; o servidor semeia um cookie
+`HttpOnly` válido por 24 h, e nas próximas vezes basta o favorito, **sem o `?t=`**. O
+token some da barra de endereço assim que o cookie prova que funciona: um favorito com
+`?t=` guardaria o segredo dentro do ícone.
+
+> **Isto expõe uma porta no seu Wi-Fi.** O token barra quem não tem o link, mas em rede
+> que você não controla — café, aeroporto, hotel — a decisão é sua. É opt-in por isso, e
+> não por acaso: `launchctl unsetenv IACHAT_LAN` volta atrás.
 
 ## Licença
 

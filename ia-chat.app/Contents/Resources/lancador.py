@@ -233,7 +233,7 @@ def conexoes(porta: int) -> int:
 # ─────────────────────────────────────────────────────────────────────────────
 CANO = r'''
 "$IACHAT_PY" "$IACHAT_SRV" --porta "$IACHAT_PORTA" --escrever --papel "$IACHAT_PAPEL" \
-    >>"$IACHAT_LOG" 2>&1 &
+    $IACHAT_LAN_FLAG >>"$IACHAT_LOG" 2>&1 &
 srv=$!
 trap 'kill "$srv" 2>/dev/null' EXIT INT TERM
 cat >/dev/null          # bloqueia até o cano do lançador fechar (EOF = pai morreu)
@@ -263,6 +263,17 @@ def sobe_servidor(py: str, servidor: Path, core: Path, porta: int,
         IACHAT_PAPEL=papel,
         IACHAT_LOG=str(LOG),
         IACHAT_JANELA=str(JANELA_PID),
+        # `IACHAT_LAN=1` faz o app servir também na rede local — é o que torna o
+        # celular alcançável pelo ícone do Dock. Sem isto o app sobe em loopback e o
+        # telefone não chega nele: era preciso subir um `servir.py --lan` à mão, o que
+        # anula o "dois cliques". Achado do worker `i1-celular` (`lancador.py`, o cano).
+        #
+        # É OPT-IN, e de propósito. Ligar por padrão mudaria o perfil de segurança de
+        # todo mundo que instala: a sala passaria a aceitar conexão de qualquer máquina
+        # do Wi-Fi — inclusive o de um café — sem que ninguém tivesse pedido. O token
+        # protege, mas a decisão de expor uma porta é do dono, não do instalador. Quem
+        # quer o celular liga; quem não quer nem fica sabendo que existe.
+        IACHAT_LAN_FLAG="--lan" if os.environ.get("IACHAT_LAN") == "1" else "",
     )
     return subprocess.Popen(
         ["/bin/sh", "-c", CANO],
