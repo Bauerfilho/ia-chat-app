@@ -94,9 +94,24 @@ echo
 echo "Abra pelo Launchpad, pelo Finder ou:  open -a ia-chat"
 
 # ── 3. o aviso que evita o primeiro susto ────────────────────────────────────
-# O app abre a sala em modo escrita como `bauer`. Quem não está em `na_sala` tem
-# o post recusado pelo núcleo — melhor dizer agora do que descobrir no botão.
-PAPEL="${IACHAT_PAPEL:-bauer}"
+# Quem não está em `na_sala` tem o post recusado pelo núcleo — melhor dizer agora do
+# que descobrir no botão.
+#
+# O papel vem do MESMO cálculo que o lançador usa (`papel_padrao`), em vez de repetir
+# `bauer` aqui. Dois lugares decidindo a identidade divergem no primeiro reparo, e o
+# aviso passaria a falar de um nome que o app não usa — pior que não avisar.
+PAPEL="${IACHAT_PAPEL:-$(python3 -c "
+import importlib.machinery, importlib.util, sys
+L = '$APP/Contents/Resources/lancador.py'
+try:
+    s = importlib.util.spec_from_loader('l', importlib.machinery.SourceFileLoader('l', L))
+    m = importlib.util.module_from_spec(s); s.loader.exec_module(m)
+    print(m.papel_padrao())
+except Exception:
+    import os, getpass
+    print(os.environ.get('USER') or getpass.getuser())
+" 2>/dev/null)}"
+PAPEL="${PAPEL:-$USER}"
 CFG="${IACHAT_HOME:-$HOME/ia-chat-global}/config.json"
 if [ -f "$CFG" ] && ! grep -q "\"$PAPEL\"" "$CFG"; then
   echo

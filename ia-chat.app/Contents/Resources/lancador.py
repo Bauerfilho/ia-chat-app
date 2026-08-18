@@ -228,6 +228,47 @@ def conexoes(porta: int) -> int:
     return n
 
 
+# Cascas de IA que o projeto reconhece. Serve só para achar o HUMANO por exclusão em
+# `papel_padrao` — quem está na sala e não é uma delas é a pessoa que usa a máquina.
+CASCAS = {"claude", "codex", "kimi", "qwen", "grok", "agy", "qwclaude", "dsclaude",
+          "gemini", "copilot", "chatgpt", "gpt", "deepseek"}
+
+
+def papel_padrao() -> str:
+    """Com que nome o app posta quando ninguém disse.
+
+    Era `"bauer"` cravado: quem clonasse o repositório e abrisse o app postaria com o
+    nome do AUTOR na própria sala. Não quebra nada — mas é a identidade de um estranho
+    no lugar da sua, e ninguém pensa em procurar uma variável de ambiente para consertar
+    algo que nem sabia que estava errado. Achado do worker `codex` na missão m2.
+
+    Trocar cru por `$USER` conserta o estranho e quebra o dono: aqui o usuário do sistema
+    é `bauervieiracesarfilhovieira`, e a sala inteira o conhece como `bauer`. Então a
+    regra pergunta ao disco em vez de adivinhar — quem JÁ está na sala tem precedência:
+
+      1. `$USER`, se ele já estiver em `na_sala` (a sala foi montada com esse nome);
+      2. o único participante que não é casca de IA (o dono, com o apelido que escolheu);
+      3. `$USER` (sala nova, ninguém decidiu ainda).
+
+    Sem sala legível, cai em `$USER`: um nome que existe é melhor que um nome herdado.
+    """
+    import getpass
+
+    eu = os.environ.get("USER") or getpass.getuser()
+    # Mesma regra do núcleo para achar a sala: `IACHAT_HOME` ou `~/ia-chat-global`.
+    sala = Path(os.environ.get("IACHAT_HOME") or (Path.home() / "ia-chat-global"))
+    try:
+        cfg = json.loads((sala / "config.json").read_text(encoding="utf-8"))
+        na_sala = [str(x).strip().lower() for x in cfg.get("na_sala", []) if str(x).strip()]
+    except (OSError, ValueError):
+        return eu
+
+    if eu.lower() in na_sala:
+        return eu
+    humanos = [x for x in na_sala if x not in CASCAS]
+    return humanos[0] if len(humanos) == 1 else eu
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # O SERVIDOR — neto, através de um cano que só existe enquanto este processo vive
 # ─────────────────────────────────────────────────────────────────────────────
@@ -387,7 +428,7 @@ def main() -> int:
         return erro("nenhum python3 desta máquina consegue importar o núcleo em\n%s"
                     % core)
 
-    papel = os.environ.get("IACHAT_PAPEL", "bauer")
+    papel = os.environ.get("IACHAT_PAPEL") or papel_padrao()
     porta = porta_livre()
 
     marca = LOG.stat().st_size if LOG.exists() else 0
