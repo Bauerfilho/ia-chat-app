@@ -76,6 +76,27 @@ def main() -> int:
           "tunel_vivo" not in vigia or "responde" in vigia,
           "se ela decidir por pgrep, um túnel zumbi passa por saudável")
 
+    print("— a vigia tem freio: sem ele, o remédio mata o paciente —")
+    # 18/08: a vigia rodou 6 vezes em 6 minutos. Como cada tentativa MATA o servidor para
+    # subir outro, ela derrubava um servidor bom a cada volta, e o dono não conseguia
+    # abrir o link. O gate original provava que ela não derruba quem RESPONDE — não
+    # provava o que acontece quando ninguém responde e ela insiste para sempre.
+    checa("existe teto de quedas seguidas", "TETO_QUEDAS" in vigia or "TETO_QUEDAS" in TEXTO,
+          "sem teto, ela tenta para sempre e derruba servidor bom a cada volta")
+    checa("a vigia PARA ao estourar o teto",
+          re.search(r"quedas.*-gt.*TETO_QUEDAS[\s\S]{0,400}exit 1", vigia) is not None,
+          "avisar e sair é melhor que insistir num remédio que não cura")
+    checa("há recuo entre tentativas",
+          re.search(r"espera=.*INTERVALO\s*\*\s*quedas", vigia) is not None,
+          "tentar sempre no mesmo intervalo é martelar")
+    # ⚠️ A medida certa é o zeramento DEPOIS de levantar, não em qualquer lugar: a
+    # inicialização antes do laço também é `quedas=0`, e com ela o gate passava verde
+    # mesmo sem o zeramento que importa. Descobri removendo a linha e vendo passar.
+    depois_de_levantar = vigia.split('"$0"', 1)[-1] if '"$0"' in vigia else ""
+    checa("o contador zera DEPOIS de levantar com sucesso",
+          re.search(r"^\s*quedas=0", depois_de_levantar, re.M) is not None,
+          "senão uma queda isolada por hora soma até o teto e a vigia desiste sem motivo")
+
     print("— o endereço fica onde dá para achar —")
     checa("existe arquivo de link", "LINK=" in TEXTO and "registra_link" in TEXTO)
     checa("o link é registrado ao subir", TEXTO.count("registra_link") >= 2,

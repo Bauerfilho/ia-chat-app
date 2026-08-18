@@ -20,6 +20,7 @@ LOG_SRV=/tmp/iachat-remoto-servidor.log
 LOG_TUN=/tmp/iachat-remoto-tunel.log
 LINK="${IACHAT_LINK_REMOTO:-$HOME/ia-chat-global/link-remoto.txt}"
 INTERVALO="${IACHAT_VIGIA_S:-60}"
+TETO_QUEDAS="${IACHAT_VIGIA_TETO:-5}"
 
 url_do_log() { grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' "$LOG_TUN" 2>/dev/null | tail -1; }
 token_do_log() { grep -oE '\?t=[A-Za-z0-9_-]+' "$LOG_SRV" 2>/dev/null | tail -1 | cut -d= -f2; }
@@ -49,8 +50,23 @@ if [ "${1:-}" = "--vigiar" ]; then
       sleep "$INTERVALO"; continue
     fi
     quedas=$((quedas + 1))
-    echo "[$(date '+%H:%M:%S')] caiu (queda $quedas) — levantando…"
-    "$0" >/tmp/iachat-remoto-vigia.log 2>&1 || { sleep "$INTERVALO"; continue; }
+    # ⚠️ RECUO E TETO. Sem eles, a vigia vira o problema: em 18/08 ela tentou 6 vezes em 6
+    # minutos, e como cada tentativa MATA o servidor para subir outro, ela derrubava um
+    # servidor bom a cada volta. O remédio matando o paciente, exatamente o risco que o
+    # gate desta peça previa — e que eu só vi quando o dono não conseguiu abrir o link.
+    if [ "$quedas" -gt "$TETO_QUEDAS" ]; then
+      echo "[$(date '+%H:%M:%S')] $quedas quedas seguidas — PARO de tentar."
+      echo "  Insistir aqui é derrubar servidor bom em looping. Veja /tmp/iachat-remoto-vigia.log"
+      echo "  e suba à mão com:  $0"
+      exit 1
+    fi
+    espera=$(( INTERVALO * quedas ))     # recuo linear: 60s, 120s, 180s…
+    echo "[$(date '+%H:%M:%S')] caiu (queda $quedas de $TETO_QUEDAS) — levantando…"
+    if ! "$0" >/tmp/iachat-remoto-vigia.log 2>&1; then
+      echo "[$(date '+%H:%M:%S')] não consegui levantar; próxima tentativa em ${espera}s"
+      sleep "$espera"; continue
+    fi
+    quedas=0                              # levantou: o contador zera
     nu="$(url_do_log)"; nt="$(token_do_log)"
     if [ "$nu" != "$u" ] && [ -n "$nu" ]; then
       echo "[$(date '+%H:%M:%S')] ENDEREÇO NOVO: $nu/?t=$nt"
@@ -79,6 +95,7 @@ command -v cloudflared >/dev/null || { echo "✗ cloudflared ausente:  brew inst
 #    aceitar o POST. Na ordem inversa, a sala carrega e o ENVIO toma 403 — o pior
 #    tipo de defeito, o que parece funcionar.
 pkill -f "cloudflared tunnel --url http://127.0.0.1:$PORTA" 2>/dev/null || true
+: > "$LOG_TUN"   # mesmo motivo do servidor
 nohup cloudflared tunnel --url "http://127.0.0.1:$PORTA" --no-autoupdate > "$LOG_TUN" 2>&1 &
 URL=""
 for _ in $(seq 1 40); do
@@ -89,9 +106,23 @@ done
 [ -n "$URL" ] || { echo "✗ o túnel não subiu em 40 s. Veja $LOG_TUN" >&2; exit 1; }
 
 # 2. o servidor, já sabendo a origem
+# ⚠️ ESPERAR A PORTA LIBERAR DE VERDADE. `kill` + `sleep 1` não basta: o socket fica em
+# TIME_WAIT e o servidor novo morre com `OSError: [Errno 48] Address already in use`.
+# Medido em 18/08: isso derrubou o túnel do dono e pôs a vigia em LOOP — 6 quedas em 6
+# minutos, cada ciclo matando um servidor bom e falhando ao subir o próximo. Na ponta o
+# sintoma era 401, porque o token lido do log pertencia a um servidor que já não existia.
 pid="$(/usr/sbin/lsof -nP -iTCP:$PORTA -sTCP:LISTEN -t 2>/dev/null | head -1 || true)"
 [ -n "$pid" ] && kill "$pid" 2>/dev/null || true
-sleep 1
+for _ in $(seq 1 30); do
+  /usr/sbin/lsof -nP -iTCP:$PORTA -sTCP:LISTEN -t >/dev/null 2>&1 || break
+  sleep 0.5
+done
+if /usr/sbin/lsof -nP -iTCP:$PORTA -sTCP:LISTEN -t >/dev/null 2>&1; then
+  echo "✗ a porta $PORTA não liberou em 15 s — não vou subir por cima." >&2; exit 1
+fi
+# o log é truncado: o token tem que ser o DESTE servidor. Log acumulativo faz o `tail -1`
+# mentir com confiança — foi o que aconteceu.
+: > "$LOG_SRV"
 IACHAT_ORIGEM="$URL" nohup python3 -u "$RAIZ/ui/servir.py" \
   --porta "$PORTA" --escrever --papel "${IACHAT_PAPEL:-bauer}" > "$LOG_SRV" 2>&1 &
 
