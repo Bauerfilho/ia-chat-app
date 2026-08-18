@@ -52,8 +52,8 @@ const COMANDOS = [
   {cmd:'/goal',     desc:'Enunciar o objetivo da rodada',                 onde:'aqui', quem:'abre a missão no disco',
    linha:'iachat-comando goal "<o objetivo>"',
    porque:'sem servidor, o terminal abre a missão.'},
-  {cmd:'/plan',     desc:'A frota ativa planeja junta e devolve o plano', onde:'aqui', quem:'despacha a frota',
-   confirma:'despachar a frota agora',
+  {cmd:'/plan',     desc:'A frota planeja junta — o tamanho da tarefa escolhe quantas e quais', onde:'aqui', quem:'despacha quem o nível pede',
+   confirma:'despachar agora',
    linha:'iachat-comando plan',
    porque:'sem servidor, o terminal despacha.'},
   {cmd:'/concluir', desc:'Autorizar: pode aplicar',                       onde:'aqui', quem:'a única etapa que muda o mundo',
@@ -695,19 +695,50 @@ async function rodaGoal(c, arg){
   if (d.degrada) return mostraLinha(c);
   painelResultado(c, d);
 }
+function argsPlan(arg){
+  /* O confirmar-antes mostra o que o CLI estimou. As saídas de escape
+     (--nivel, --ias, --todas) atravessam o JSON do via-app, nunca o argv:
+     o servidor continua com allowlist constante. */
+  const out = {};
+  const toks = String(arg || '').trim().split(/\s+/).filter(Boolean);
+  for (let i = 0; i < toks.length; i++){
+    const t = toks[i];
+    if (t === 'colher'){ out.colher = true; continue; }
+    if (t === '--todas'){ out.todas = true; continue; }
+    if (t === '--nivel' || t.startsWith('--nivel=')){
+      const v = t.includes('=') ? t.slice(t.indexOf('=') + 1) : toks[++i];
+      if (v === '1' || v === '2' || v === '3') out.nivel = Number(v);
+      continue;
+    }
+    if (t === '--ias' || t.startsWith('--ias=')){
+      const v = t.includes('=') ? t.slice(t.indexOf('=') + 1) : toks[++i];
+      if (v) out.ias = [v];
+    }
+  }
+  return out;
+}
 async function rodaPlan(c, arg){
-  if (arg === 'colher'){
+  const extra = argsPlan(arg);
+  if (extra.colher){
     // colher só lê os planos do disco e devolve o resumo à sala: sem confirmação.
     painelEspera(c, 'colhendo os planos…');
     const d = await pedeComando(c, {colher: true});
     if (d.degrada) return mostraLinha(c);
     return painelResultado(c, d);
   }
+  const payload = {seco: true};
+  if (extra.todas) payload.todas = true;
+  if (extra.nivel) payload.nivel = extra.nivel;
+  if (extra.ias) payload.ias = extra.ias;
   painelEspera(c, 'prevendo o despacho…');
-  const d = await pedeComando(c, {seco: true});
+  const d = await pedeComando(c, payload);
   if (d.degrada) return mostraLinha(c);
   if (d.ok === false || d.erro) return painelResultado(c, d);
-  painelConfirma(c, d.saida, {}, d.recibo);
+  const confirmacao = {};
+  if (extra.todas) confirmacao.todas = true;
+  if (extra.nivel) confirmacao.nivel = extra.nivel;
+  if (extra.ias) confirmacao.ias = extra.ias;
+  painelConfirma(c, d.saida, confirmacao, d.recibo);
 }
 async function rodaConcluir(c, arg){
   painelEspera(c, 'autorizando…');
