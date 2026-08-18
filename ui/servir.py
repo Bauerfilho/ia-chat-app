@@ -525,8 +525,10 @@ class Sala(BaseHTTPRequestHandler):
         })
 
     def _iaswarm_id(self, bruto: str) -> str | None:
-        nome = (bruto or "").strip()
-        if not RE_IASWARM_ID.match(nome):
+        if not isinstance(bruto, str):
+            return None
+        nome = bruto.strip()
+        if not RE_IASWARM_ID.fullmatch(nome) or ".." in nome:
             return None
         return nome
 
@@ -765,6 +767,17 @@ class Sala(BaseHTTPRequestHandler):
         if alvo is None:
             return self._json({"erro": f"'{nome}' não atravessa o servidor"}, 404)
         sub, aceita_de = alvo
+        if nome in ("parar", "refaz"):
+            # Defesa em profundidade: o CLI repete esta validação ao ler o
+            # JSON. Esta ponta recusa ANTES do recibo e ANTES do subprocesso;
+            # ``run``/``ia`` são IDs opacos, nunca texto livre nem caminho.
+            for campo in ("run", "ia"):
+                if campo in dados and self._iaswarm_id(dados[campo]) is None:
+                    return self._json({
+                        "erro": f"`{campo}` é identificador IASWARM inválido; "
+                                "use 1–80 caracteres [A-Za-z0-9._-], sem `/`, "
+                                "espaço ou `..`"
+                    }, 400)
         if nome in EXIGEM_CONFIRMACAO:
             so_leitura = dados.get("seco") is True or (
                 nome == "plan" and dados.get("colher") is True)

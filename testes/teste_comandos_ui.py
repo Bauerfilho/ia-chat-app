@@ -73,12 +73,18 @@ def porta_livre(inicio: int = 59930) -> int:
     raise RuntimeError("sem porta livre")
 
 
-def sobe(home: Path, porta: int, escrever: bool = True) -> tuple[subprocess.Popen, str]:
+def sobe(home: Path, porta: int, escrever: bool = True,
+         raiz_iaswarm: Path | None = None,
+         despacho: Path | None = None) -> tuple[subprocess.Popen, str]:
     """Sobe o servidor. `--escrever` obriga token, e é com token que o 401 é provado."""
     argv = [sys.executable, str(SERVIR), "--porta", str(porta)]
     if escrever:
         argv.append("--escrever")
     env = dict(os.environ, IACHAT_HOME=str(home), PYTHONPATH=str(CORE_BIN))
+    if raiz_iaswarm is not None:
+        env["IASWARM_RAIZ"] = str(raiz_iaswarm)
+    if despacho is not None:
+        env["IACHAT_DESPACHO"] = str(despacho)
     proc = subprocess.Popen(
         argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
     token = ""
@@ -271,14 +277,150 @@ def main() -> int:
     checa("REPROVA: toda classe usada nos painéis já existe no CSS",
           not ausentes, f"inventadas: {ausentes} · usadas: {classes}")
 
+    print("— o controle remoto tem exatamente as duas ações contratadas —")
+    botoes_remotos = re.findall(r'data-remoto-acao="([^"]+)"', js)
+    checa("a página do worker oferece só parar e refaz",
+          sorted(botoes_remotos) == ["parar", "refaz"], str(botoes_remotos))
+    checa("as ações remotas usam o mesmo prever → recibo → confirmar",
+          "async function acaoRemota" in js
+          and "seco:true" in js
+          and "confirmado:true" in js
+          and "recibo" in js)
+    checa("o remoto envia run e ia como dados, nunca como linha de comando",
+          re.search(r"\{run:[^,]+,\s*ia:[^,]+,\s*seco:true\}", js) is not None)
+
     home = Path(tempfile.mkdtemp(prefix="ui-comandos-"))
+    raiz_iaswarm = home / "iaswarm-runs"
+    run_seguro = raiz_iaswarm / "run-seguro"
+    for nome in ("logs", "resultados", "progress", "contratos"):
+        (run_seguro / nome).mkdir(parents=True, exist_ok=True)
+    (run_seguro / "workers.tsv").write_text(
+        "codex\tcodex\t2\tcontratos/codex.md\n"
+        "kimi\tkimi\t2\tcontratos/kimi.md\n",
+        encoding="utf-8",
+    )
+    (run_seguro / "contratos" / "codex.md").write_text(
+        "# worker falso seguro\n", encoding="utf-8"
+    )
+    (run_seguro / "contratos" / "kimi.md").write_text(
+        "# worker morto de controle\n", encoding="utf-8"
+    )
+    despacho_fake = home / "despacho-falso.py"
+    despacho_fake.write_text(
+        "#!/usr/bin/env python3\n"
+        "import sys\n"
+        "from pathlib import Path\n"
+        "Path(sys.argv[4]).write_text('worker falso redisparado\\n', encoding='utf-8')\n"
+        "Path(sys.argv[5]).write_text('missão: worker falso\\nresultado: seguro\\n', encoding='utf-8')\n",
+        encoding="utf-8",
+    )
+    despacho_fake.chmod(0o700)
+    fake_swarm = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(300)",
+         str(run_seguro / "contratos" / "codex.md")],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    (run_seguro / "logs" / "codex.pid").write_text(
+        f"{fake_swarm.pid}\n", encoding="utf-8"
+    )
+    (run_seguro / "logs" / "kimi.pid").write_text("999999\n", encoding="utf-8")
     porta = porta_livre()
-    proc, token = sobe(home, porta)
+    proc, token = sobe(
+        home, porta, raiz_iaswarm=raiz_iaswarm, despacho=despacho_fake
+    )
     fake = None
     try:
         if not token:
             checa("servidor subiu e anunciou o token", False, "sem token no stdout")
             return 1
+
+        print("— identificadores IASWARM morrem também na borda do servidor —")
+        invalidos_http = (
+            ("/api/parar", {"run": "../fora", "ia": "codex", "seco": True}),
+            ("/api/refaz", {"run": "../fora", "ia": "codex", "seco": True}),
+            ("/api/parar", {"run": "run-seguro", "ia": "co/dex", "seco": True}),
+            ("/api/refaz", {"run": "run-seguro", "ia": "co dex", "seco": True}),
+            ("/api/parar", {"run": "r" * 81, "ia": "codex", "seco": True}),
+            ("/api/refaz", {"run": "run-seguro", "ia": "i" * 81, "seco": True}),
+        )
+        for rota, payload_ruim in invalidos_http:
+            cod, corpo_resp = pede(porta, rota, token, "POST", payload_ruim)
+            checa(
+                f"REPROVA no servidor: {rota} recusa identificador ruim",
+                cod == 400 and "identificador" in corpo_resp.lower(),
+                f"HTTP {cod}: {corpo_resp[:160]}",
+            )
+
+        print("— controle remoto IASWARM: dois tempos e worker falso seguro —")
+        alvo = {"run": "run-seguro", "ia": "codex"}
+        cod, corpo_resp = pede(
+            porta, "/api/parar", token, "POST", {**alvo, "seco": True}
+        )
+        d = json.loads(corpo_resp) if corpo_resp else {}
+        recibo_parar_cruzado = d.get("recibo")
+        checa("previsão de parar o worker exato traz recibo",
+              cod == 200 and isinstance(recibo_parar_cruzado, str)
+              and str(fake_swarm.pid) in d.get("saida", ""),
+              f"HTTP {cod}: {corpo_resp[:180]}")
+        checa("a previsão IASWARM não mata", fake_swarm.poll() is None)
+
+        cod, corpo_resp = pede(
+            porta, "/api/refaz", token, "POST",
+            {**alvo, "confirmado": True, "recibo": recibo_parar_cruzado},
+        )
+        checa("REPROVA: recibo de parar não confirma refaz no mesmo worker",
+              cod == 400 and "recibo" in corpo_resp.lower(),
+              f"HTTP {cod}: {corpo_resp[:150]}")
+
+        cod, corpo_resp = pede(
+            porta, "/api/parar", token, "POST", {**alvo, "seco": True}
+        )
+        recibo_ia = (json.loads(corpo_resp) if corpo_resp else {}).get("recibo")
+        cod, corpo_resp = pede(
+            porta, "/api/parar", token, "POST",
+            {"run": "run-seguro", "ia": "kimi", "confirmado": True,
+             "recibo": recibo_ia},
+        )
+        checa("REPROVA: recibo de --ia codex não confirma --ia kimi",
+              cod == 400 and "argumentos" in corpo_resp.lower(),
+              f"HTTP {cod}: {corpo_resp[:150]}")
+
+        cod, corpo_resp = pede(
+            porta, "/api/parar", token, "POST", {**alvo, "seco": True}
+        )
+        d = json.loads(corpo_resp) if corpo_resp else {}
+        recibo_parar = d.get("recibo")
+        cod, corpo_resp = pede(
+            porta, "/api/parar", token, "POST",
+            {**alvo, "confirmado": True, "recibo": recibo_parar},
+        )
+        time.sleep(0.4)
+        checa("caminho honesto: parar confirmado mata só o worker falso",
+              cod == 200 and fake_swarm.poll() is not None,
+              f"HTTP {cod}: {corpo_resp[:180]}")
+
+        cod, corpo_resp = pede(
+            porta, "/api/refaz", token, "POST", {**alvo, "seco": True}
+        )
+        d = json.loads(corpo_resp) if corpo_resp else {}
+        recibo_refaz_run = d.get("recibo")
+        checa("previsão de refaz do worker parado traz recibo",
+              cod == 200 and isinstance(recibo_refaz_run, str),
+              f"HTTP {cod}: {corpo_resp[:180]}")
+        cod, corpo_resp = pede(
+            porta, "/api/refaz", token, "POST",
+            {**alvo, "confirmado": True, "recibo": recibo_refaz_run},
+        )
+        limite_resultado = time.time() + 4
+        resultado_fake = run_seguro / "resultados" / "codex.md"
+        while time.time() < limite_resultado and not resultado_fake.exists():
+            time.sleep(0.05)
+        checa("caminho honesto: refaz confirmado aciona o dispatcher seguro",
+              cod == 200 and resultado_fake.is_file()
+              and "resultado: seguro" in resultado_fake.read_text(encoding="utf-8"),
+              f"HTTP {cod}: {corpo_resp[:180]}")
 
         print("— trava 3: confirmação enviada de primeira morre no servidor —")
         confirmacoes_sem_previsao = (
@@ -518,6 +660,12 @@ def main() -> int:
                 fake.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 fake.kill()
+        if fake_swarm.poll() is None:
+            fake_swarm.terminate()
+            try:
+                fake_swarm.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                fake_swarm.kill()
         proc.terminate()
         try:
             proc.wait(timeout=5)

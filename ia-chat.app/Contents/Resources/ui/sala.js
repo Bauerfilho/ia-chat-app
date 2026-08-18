@@ -1451,7 +1451,7 @@ function exVivacidade(w, agora){
 const EX = {
   raiz: $('#enxame'), reatores: $('#enxame-reatores'), doca: $('#enxame-doca'),
   remoto: $('#enxame-remoto'), placar: $('#enxame-placar'), fonte: $('#enxame-fonte'),
-  log: $('#enxame-log'), filtro:'todos', swarm:null, remotoAlvo:null,
+  log: $('#enxame-log'), filtro:'todos', swarm:null, remotoAlvo:null, remotoAcao:null,
   anterior: new Map(), primeira:true, ocupado:false, vivo:false, rotulo:'—',
   runs:[], timer:null,
 };
@@ -1483,7 +1483,8 @@ function janelaEnxame(abrir){
 }
 function fechaRemotoEnxame(){
   if (!EX.remoto || EX.remoto.hidden) return false;
-  EX.remotoAlvo = null; EX.remoto.hidden = true; EX.remoto.innerHTML = '';
+  EX.remotoAlvo = null; EX.remotoAcao = null;
+  EX.remoto.hidden = true; EX.remoto.innerHTML = '';
   return true;
 }
 function fechaDocaEnxame(){
@@ -1736,8 +1737,79 @@ async function exTick(){
   finally { EX.ocupado = false; }
 }
 
+function remotoRestauraBotoes(){
+  $$('[data-remoto-acao]', EX.remoto).forEach(b=>{
+    b.disabled = false;
+    b.setAttribute('aria-pressed', 'false');
+    b.textContent = b.dataset.remotoAcao === 'parar' ? 'parar esta IA' : 'redisparar';
+  });
+}
+function remotoResposta(html, erro=false){
+  const alvo = $('#ex-remoto-acao-saida', EX.remoto);
+  if (!alvo) return;
+  alvo.innerHTML = html;
+  alvo.dataset.erro = erro ? 'sim' : 'nao';
+}
+/** Um clique prevê; o segundo clique NO MESMO botão confirma com o recibo.
+    Os dois botões são a allowlist visual inteira desta página. */
+async function acaoRemota(nome){
+  const opcoes = {
+    parar: {cmd:'/parar', esperando:'vendo o que seria parado…', confirmar:'confirmar: parar esta IA'},
+    refaz: {cmd:'/refaz', esperando:'prevendo a retomada…', confirmar:'confirmar: redisparar'},
+  };
+  const opcao = opcoes[nome];
+  const alvo = EX.remotoAlvo;
+  if (!opcao || !alvo) return;
+  const c = COMANDOS.find(x=>x.cmd===opcao.cmd);
+  if (!c) return;
+  const anterior = EX.remotoAcao;
+  const confirmando = anterior && anterior.nome === nome && anterior.recibo;
+  const botoes = $$('[data-remoto-acao]', EX.remoto);
+  botoes.forEach(b=>b.disabled=true);
+  remotoResposta(`<b>${esc(confirmando?'executando…':opcao.esperando)}</b>`);
+
+  let payload;
+  if (confirmando){
+    payload = {run:alvo.run, ia:alvo.worker, confirmado:true, recibo:anterior.recibo};
+  } else {
+    payload = {run:alvo.run, ia:alvo.worker, seco:true};
+  }
+  const d = await pedeComando(c, payload);
+  // Uma resposta atrasada da página anterior nunca redesenha o worker novo.
+  if (!EX.remotoAlvo || EX.remotoAlvo.run !== alvo.run ||
+      EX.remotoAlvo.worker !== alvo.worker) return;
+
+  if (d.degrada){
+    EX.remotoAcao = null; remotoRestauraBotoes();
+    return remotoResposta('<b>Este servidor ainda não tem a rota de ação.</b>', true);
+  }
+  if (d.ok === false || d.erro){
+    EX.remotoAcao = null; remotoRestauraBotoes();
+    return remotoResposta(`<b>recusado</b><br><code translate="no" style="white-space:pre-wrap">${esc(d.erro||'o comando recusou')}</code>`, true);
+  }
+  if (confirmando){
+    EX.remotoAcao = null; remotoRestauraBotoes();
+    const aviso = d.aviso ? `<br><code translate="no" style="white-space:pre-wrap">${esc(d.aviso)}</code>` : '';
+    return remotoResposta(`<b>feito</b><br><code translate="no" style="white-space:pre-wrap">${esc(d.saida||'feito.')}</code>${aviso}`);
+  }
+  if (typeof d.recibo !== 'string' || !d.recibo){
+    EX.remotoAcao = null; remotoRestauraBotoes();
+    return remotoResposta('<b>previsão sem recibo: não vou oferecer confirmação.</b>', true);
+  }
+  EX.remotoAcao = {nome, recibo:d.recibo};
+  remotoRestauraBotoes();
+  const botao = $$('[data-remoto-acao]', EX.remoto)
+    .find(b=>b.dataset.remotoAcao===nome);
+  if (botao){
+    botao.setAttribute('aria-pressed', 'true');
+    botao.textContent = opcao.confirmar;
+  }
+  remotoResposta(`<b>previsão — nada aconteceu ainda</b><br><code translate="no" style="white-space:pre-wrap">${esc(d.saida||'')}</code>`);
+}
+
 async function abreRemoto(runId, workerId){
   EX.remotoAlvo = {run:runId, worker:workerId};
+  EX.remotoAcao = null;
   EX.remoto.hidden = false;
   EX.remoto.innerHTML = `<p class="enxame-vazio">lendo o controle remoto de <b>${esc(workerId)}</b>…</p>`;
   try {
@@ -1761,6 +1833,13 @@ async function abreRemoto(runId, workerId){
         </div>
         <button class="enxame-fecha" type="button" id="ex-fecha-remoto" aria-label="fechar o controle remoto">✕</button>
       </div>
+      <div class="enxame-controle" role="group" aria-label="ações para ${esc(d.worker)}">
+        <button class="enxame-btn" type="button" data-remoto-acao="parar" aria-pressed="false">parar esta IA</button>
+        <button class="enxame-btn" type="button" data-remoto-acao="refaz" aria-pressed="false">redisparar</button>
+      </div>
+      <p class="enxame-det-rodape" id="ex-remoto-acao-saida" role="status" aria-live="polite">
+        Escolha uma ação para ver a previsão. Nada acontece no primeiro clique.
+      </p>
       <div class="enxame-remoto-grade">
         <div>
           <h3 class="enxame-det-h">o que ela está fazendo</h3>
@@ -1804,6 +1883,12 @@ if (EX.raiz){
       ev.preventDefault(); ev.stopPropagation();
       const [runId, workerId] = nome.dataset.remoto.split('/');
       abreRemoto(runId, workerId); return;
+    }
+    const acao = ev.target.closest('[data-remoto-acao]');
+    if (acao){
+      ev.preventDefault();
+      acaoRemota(acao.dataset.remotoAcao);
+      return;
     }
     if (ev.target.closest('#ex-fecha-remoto')){ fechaRemotoEnxame(); return; }
     if (ev.target.closest('#ex-fecha-doca')){ fechaDocaEnxame(); return; }
