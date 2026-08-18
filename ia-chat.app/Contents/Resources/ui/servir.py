@@ -278,16 +278,29 @@ def main() -> int:
 
     host = "0.0.0.0" if a.lan else "127.0.0.1"
     sufixo = f"?t={CFG['token']}" if CFG["token"] else ""
+
+    # `flush=True` NÃO é zelo — é o que faz o app abrir.
+    #
+    # O lançador do `.app` sobe este servidor com stdout redirecionado para um log e
+    # descobre o token LENDO esse log. Com stdout num arquivo, o Python usa buffer de
+    # bloco (medido: 131.072 B); estas ~150 bytes nunca o enchem, e como o servidor não
+    # imprime mais nada depois, o log fica **vazio para sempre**. O lançador não acha o
+    # token, bate em `/api/estado` sem ele, toma 401, conclui "não respondeu" e mata o
+    # app aos 20 s — com um alerta enganoso, porque o servidor estava vivo e respondendo.
+    #
+    # Achado por auditoria externa em 18/08, e eu tinha visto o sintoma horas antes: subi
+    # o servidor, o log saiu vazio, contornei com `python3 -u` e segui. Contornar sem
+    # diagnosticar deixou o defeito de pé exatamente onde ele quebrava o produto.
     if a.lan:
         # Uma URL por interface: com VPN ligada, só uma delas serve para o celular.
         for i, ip in enumerate(_ips_lan()):
             marca = "→" if i == 0 else " ·"
-            print(f"{marca} http://{ip}:{a.porta}/{sufixo}")
+            print(f"{marca} http://{ip}:{a.porta}/{sufixo}", flush=True)
     else:
-        print(f"→ http://127.0.0.1:{a.porta}/{sufixo}")
+        print(f"→ http://127.0.0.1:{a.porta}/{sufixo}", flush=True)
     print(f"  sala: {core.home()}   "
           f"{'escrita liberada' if a.escrever else 'somente leitura'}"
-          f"{'   · na rede local' if a.lan else ''}")
+          f"{'   · na rede local' if a.lan else ''}", flush=True)
     ThreadingHTTPServer((host, a.porta), Sala).serve_forever()
     return 0
 
