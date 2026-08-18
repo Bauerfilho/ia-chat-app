@@ -1,0 +1,210 @@
+# ia-chat-app · a bateria inteira, em toda mudança.
+#
+# ─── POR QUE macOS, e não Ubuntu (que é mais rápido e mais barato) ────────────
+# Este repositório É um app de macOS. A bateria mede coisas que só existem aqui:
+# `teste_bundle.py` e `teste_montagem.py` conferem o `.icns` e o `Info.plist`
+# (`sips`, `iconutil`, `plutil`); `teste_servidores.py`, `teste_limites.py`,
+# `teste_coerencia_servidores.py` e `teste_e2e.py` provam o rescaldo com o `lsof`
+# de `/usr/sbin` — no Linux ele mora em `/usr/bin`, quando está instalado.
+#
+# Num runner Ubuntu esses testes não ficariam vermelhos por um defeito do produto:
+# ficariam vermelhos por falta de ferramenta, ou se declarariam não-aplicáveis. As
+# duas saídas são piores que não rodar — a primeira ensina a ignorar o vermelho, a
+# segunda pinta de verde o que ninguém mediu.
+#
+# Custo: minutos de macOS valem 10× em repositório privado. Em repositório
+# PÚBLICO, os runners padrão do GitHub são gratuitos — e este repo vai ser
+# público. Se um dia for fechado, esta linha vira decisão de dinheiro e tem de ser
+# revista aqui, com o número na mão. Medida local da bateria: 19 s.
+name: testes
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Sem caminho de máquina em lugar nenhum: o dono vem do contexto do evento (em
+  # `pull_request` o GitHub usa o repositório BASE, então PR de fork também
+  # acerta). O nome do irmão é convenção do projeto — a mesma que o
+  # `instalar-app.sh` usa quando deriva `ia-chat` de `ia-chat-app`.
+  REPO_IRMAO: ${{ github.repository_owner }}/ia-chat
+
+jobs:
+  bateria:
+    name: bateria · python ${{ matrix.interpretador }}
+    runs-on: macos-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # DUAS pernas, e cada uma cobre o que a outra não cobre:
+        #  · `sistema`  — o `/usr/bin/python3` do Mac (3.9.6). É a promessa do
+        #    projeto: quem clona não instala nada, e o `lancador.py` só pode dizer
+        #    "roda o lançador sem reclamar" se alguém provar. `actions/setup-python`
+        #    NÃO oferece 3.9 em macOS arm64 — usar o do sistema não é só mais fiel,
+        #    é a única forma de testar 3.9 neste runner.
+        #  · `moderno`  — o Python de hoje, que pega o contrário: sintaxe e stdlib
+        #    que mudam sob os pés.
+        interpretador: [sistema, moderno]
+
+    steps:
+      - name: este repositório
+        uses: actions/checkout@v4
+        with:
+          path: ia-chat-app
+
+      # Não é conveniência: os servidores importam `iachat_core` do repo irmão, e
+      # os testes o procuram em `RAIZ.parent / "ia-chat" / "bin"`. Sem ele, TODA a
+      # bateria para no primeiro `checa("núcleo disponível")`. O clone tem de vir
+      # com o nome exato `ia-chat`, que é o que a estrutura de pastas espera —
+      # independente de como o repositório se chame no GitHub.
+      - name: o repositório irmão, ao lado
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.REPO_IRMAO }}
+          path: ia-chat
+
+      - name: o núcleo está mesmo do lado
+        run: |
+          if [ ! -f "$GITHUB_WORKSPACE/ia-chat/bin/iachat_core.py" ]; then
+            echo "::error::$REPO_IRMAO não veio, ou veio sem bin/iachat_core.py. Sem o núcleo a bateria inteira é inconclusiva — parando aqui em vez de rodar 15 testes que só sabem dizer 'núcleo ausente'."
+            exit 1
+          fi
+          echo "· núcleo presente: $GITHUB_WORKSPACE/ia-chat/bin/iachat_core.py"
+
+      - name: python moderno
+        if: matrix.interpretador == 'moderno'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      # O valor entra por `env`, não por interpolação dentro do shell: aqui ele é
+      # literal da minha própria matriz, mas a regra de nunca costurar expressão
+      # em `run:` vale mesmo quando a entrada é confiável — é o hábito que impede
+      # o dia em que ela deixa de ser.
+      - name: escolher o interpretador e dizer qual é
+        env:
+          PERNA: ${{ matrix.interpretador }}
+        run: |
+          if [ "$PERNA" = "sistema" ]; then
+            PY=/usr/bin/python3
+            if [ ! -x "$PY" ]; then
+              echo "::error::$PY não existe neste runner. A promessa 'roda no Python que já vem no Mac' não pode ser testada — falhando alto em vez de trocar de interpretador por baixo do pano."
+              exit 1
+            fi
+          else
+            PY="$(command -v python3)"
+          fi
+          echo "PY=$PY" >> "$GITHUB_ENV"
+          echo "· interpretador: $PY"
+          "$PY" -VV
+
+      # O bundle é versionado montado, mas ícone e interface têm dono em outra
+      # pasta. Montar ANTES da bateria é o que faz o CI reprovar quem mexeu em
+      # `ui/` ou `marca/` e esqueceu de sincronizar — em vez de testar uma cópia
+      # velha e passar.
+      - name: montar o bundle a partir das fontes
+        working-directory: ia-chat-app
+        run: ./montar.sh
+
+      - name: a bateria inteira
+        working-directory: ia-chat-app
+        run: |
+          set -u
+          set -o pipefail
+          # `set +e` é DELIBERADO e não é relaxamento. O runner entrega o shell com
+          # `-e` ligado; com ele, o primeiro teste vermelho abortaria o laço e o
+          # resumo nunca sairia — o CI diria "falhou" sem dizer o quê, e os outros
+          # 14 testes ficariam sem resposta. Quem decide o veredito aqui é o
+          # contador `falharam`, na última linha, não o primeiro tropeço.
+          set +e
+          # Sem `nullglob`, um glob sem correspondência sobra literal e o laço
+          # "roda" um arquivo chamado `teste_*.py`: o CI reprovaria, sim, mas pelo
+          # motivo errado e com a mensagem errada. Com ele, zero é zero.
+          shopt -s nullglob
+          LOGS="$RUNNER_TEMP/logs"; mkdir -p "$LOGS"
+          encontrados=0; executados=0; falharam=0; declarados=0
+          linhas=""
+          for f in testes/teste_*.py; do
+            encontrados=$((encontrados + 1))
+            nome="$(basename "$f" .py)"
+            if "$PY" "$f" > "$LOGS/$nome.log" 2>&1; then estado="✔"; else
+              estado="✗"; falharam=$((falharam + 1)); fi
+            executados=$((executados + 1))
+            # ⊘ é como um teste desta casa declara "não aplicável neste sistema".
+            # O CI não pode deixar isso passar calado: conta, mostra na tabela e
+            # avisa. Exclusão declarada é aceitável; exclusão invisível não é.
+            na="$(grep -c '⊘' "$LOGS/$nome.log" 2>/dev/null || true)"
+            # `if` e não `[ ... ] && ...`: uma lista `&&` que termina em falso é
+            # comando falho, e num shell com `-e` isso mata o laço no primeiro
+            # teste. A forma explícita não tem esse gume.
+            if [ -z "$na" ]; then na=0; fi
+            declarados=$((declarados + na))
+            printf '  %s %-34s ⊘%s\n' "$estado" "$nome" "$na"
+            linhas="$linhas| \`$nome\` | $estado | $na |"$'\n'
+            if [ "$estado" = "✗" ]; then
+              echo "::group::✗ $nome"; cat "$LOGS/$nome.log"; echo "::endgroup::"
+            fi
+          done
+
+          {
+            echo "## bateria · \`$PY\`"
+            echo
+            echo "| teste | resultado | ⊘ declarados |"
+            echo "|---|---|---|"
+            printf '%s' "$linhas"
+            echo
+            echo "**$encontrados encontrados · $executados executados · $falharam vermelhos · $declarados não-aplicáveis declarados**"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          # Um CI que roda zero teste e diz "passing" é a mentira mais barata que
+          # existe. Se o glob não achar nada — pasta renomeada, checkout no lugar
+          # errado —, isto é vermelho, não verde.
+          if [ "$encontrados" -eq 0 ]; then
+            echo "::error::nenhum testes/teste_*.py encontrado. Um verde aqui seria mentira."
+            exit 1
+          fi
+          if [ "$executados" -ne "$encontrados" ]; then
+            echo "::error::$encontrados encontrados e só $executados executados."
+            exit 1
+          fi
+          if [ "$declarados" -gt 0 ]; then
+            echo "::warning::$declarados verificação(ões) se declararam não-aplicáveis neste runner — veja a tabela do resumo e os logs."
+          fi
+          echo "· $encontrados testes · $falharam vermelhos · $declarados ⊘"
+          [ "$falharam" -eq 0 ]
+          exit $?
+
+      # Vários testes sobem servidor em porta alta e provam o rescaldo com `lsof`.
+      # Quando um deles cai, o que responde "por quê" é o log dele — e repetir a
+      # corrida para descobrir custa mais que guardar o arquivo.
+      - name: guardar os logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-${{ matrix.interpretador }}
+          path: ${{ runner.temp }}/logs
+          retention-days: 14
+
+      # O bundle é versionado montado. Se a bateria passou mas `montar.sh` mexeu
+      # em algo, o commit está fora de sincronia com as fontes — e quem clonar o
+      # repo leva um `.app` diferente do que o CI testou.
+      - name: o bundle commitado está sincronizado com as fontes
+        if: always()
+        working-directory: ia-chat-app
+        run: |
+          if [ -n "$(git status --porcelain ia-chat.app)" ]; then
+            echo "::error::o ./montar.sh mudou o bundle — o que está commitado não bate com ui/ e marca/. Rode ./montar.sh e faça commit do resultado."
+            git status --porcelain ia-chat.app
+            exit 1
+          fi
+          echo "· bundle em dia com ui/ e marca/"

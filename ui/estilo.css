@@ -172,11 +172,12 @@ code,kbd,.num{font-family:var(--mono); font-variant-numeric:tabular-nums}
 
 /* ── CAMADA 3 · a moldura ───────────────────────────────────────────────── */
 .moldura{
-  position:relative;z-index:3;height:100dvh;display:grid;
+  position:relative;z-index:3;height:var(--altura-viva,100dvh);display:grid;
   grid-template-columns:76px minmax(0,1fr) 336px;
   grid-template-rows:auto minmax(0,1fr) auto;
   grid-template-areas:"trilho cabeca gaveta" "trilho sala gaveta" "trilho comp gaveta";
   padding-right:env(safe-area-inset-right); padding-bottom:env(safe-area-inset-bottom);
+  padding-left:env(safe-area-inset-left);
   transition:grid-template-columns var(--t-padrao) var(--ease);
 }
 .moldura[data-gaveta="fechada"]{grid-template-columns:76px minmax(0,1fr) 0px}
@@ -499,6 +500,15 @@ code,kbd,.num{font-family:var(--mono); font-variant-numeric:tabular-nums}
   background:var(--superf);border-left:1px solid var(--borda);
   transition:opacity var(--t-padrao) var(--ease)}
 .moldura[data-gaveta="fechada"] .gaveta{opacity:0;pointer-events:none}
+/* só existe no celular, onde a gaveta cobre a tela e precisa de saída */
+.gaveta-fecha{display:none;position:absolute;top:var(--u);right:var(--u);z-index:2;
+  width:34px;height:34px;place-items:center;cursor:pointer;font-size:15px;
+  background:var(--superf-alta);border:1px solid var(--borda-forte);
+  border-radius:50%;color:var(--tinta-2);
+  transition:color var(--t-rapido) var(--ease),border-color var(--t-rapido) var(--ease)}
+.gaveta-fecha:hover{color:var(--ouro-tinta);border-color:var(--ouro-fio)}
+.veu-gaveta{display:none}
+
 .gaveta-abas{display:flex;gap:2px;padding:var(--u2) var(--u2) 0;border-bottom:1px solid var(--borda)}
 .aba{flex:1;padding:8px 4px;cursor:pointer;background:transparent;border:none;
   border-bottom:2px solid transparent;font-size:12px;color:var(--tinta-3);
@@ -614,16 +624,101 @@ code,kbd,.num{font-family:var(--mono); font-variant-numeric:tabular-nums}
   .moldura[data-gaveta="aberta"] .gaveta{position:fixed;right:0;top:0;bottom:0;width:336px;
     z-index:30;box-shadow:var(--sombra-g);opacity:1;pointer-events:auto}
 }
+/* ── O CELULAR ──────────────────────────────────────────────────────────────
+   Medido em 390×844 antes desta regra: a gaveta ocupava 336 px de 390 (86% da
+   tela), sobreposta e quase vazia, e os dois botões que a fecham viviam no
+   trilho — que estava `display:none`. Não havia saída: nem fechar a gaveta, nem
+   trocar de tema, nem ver quem estava na sala.
+
+   A correção não redesenha nada: o trilho deixa de ser uma COLUNA e vira uma
+   FAIXA no topo, com as mesmas peças (marca, presença, os dois botões) deitadas.
+   Mesmo carvão, mesmo filete dourado, mesma cor por IA. ─────────────────────── */
 @media (max-width:760px){
-  .moldura{grid-template-columns:0px minmax(0,1fr) 0px;
-    grid-template-areas:"cabeca cabeca cabeca" "sala sala sala" "comp comp comp"}
-  .trilho{display:none}
-  .cabeca{padding:var(--u2)}
-  .cabeca-busca{max-width:none}
+  .moldura{
+    grid-template-columns:0px minmax(0,1fr) 0px;
+    grid-template-rows:auto auto minmax(0,1fr) auto;
+    grid-template-areas:"trilho trilho trilho" "cabeca cabeca cabeca"
+                        "sala sala sala" "comp comp comp";
+    padding-left:env(safe-area-inset-left);
+  }
+
+  /* o trilho deitado */
+  .trilho{flex-direction:row;align-items:center;gap:var(--u2);
+    padding:var(--u) var(--u2);padding-top:calc(var(--u) + env(safe-area-inset-top));
+    box-shadow:inset 0 -1px 0 rgba(232,206,142,.14), var(--sombra-p)}
+  .trilho::after{inset:auto 0 0 0;width:auto;height:1px;
+    background:linear-gradient(to right,transparent,var(--ouro) 18%,var(--ouro) 82%,transparent)}
+  .trilho-marca{flex-direction:row;align-items:center;gap:6px;margin:0;flex-shrink:0}
+  .marca-glifo{font-size:18px}
+  .trilho-titulo{display:none}
+  /* os selos têm aro e brilho por fora do círculo: sem folga vertical, o trilho
+     os corta. E a lista rola — a máscara diz isso sem precisar de seta. */
+  .presenca{flex-direction:row;gap:var(--u2);flex:1;overflow-x:auto;overflow-y:hidden;
+    justify-content:flex-start;padding:6px 2px;scroll-snap-type:x proximity;
+    -webkit-mask-image:linear-gradient(to right,transparent,#000 12px,#000 calc(100% - 16px),transparent);
+            mask-image:linear-gradient(to right,transparent,#000 12px,#000 calc(100% - 16px),transparent)}
+  .presenca li{scroll-snap-align:start;flex-shrink:0}
+  .trilho-rodape{flex-direction:row;gap:6px;padding:0;border-top:none;width:auto;flex-shrink:0}
+
+  /* o cabeçalho em duas linhas: em 390 px, título + busca + estado na mesma
+     linha espremiam a busca a 98 px (só a lupa cabia) e quebravam "31 KB" */
+  .cabeca{display:grid;grid-template-columns:1fr auto;gap:var(--u) var(--u2);
+    padding:var(--u2) var(--u2) var(--u)}
+  .cabeca-titulo{font-size:19px}
+  .cabeca-sub{white-space:nowrap}
+  .cabeca-estado{grid-row:1;grid-column:2;justify-self:end;align-self:center}
+  .cabeca-busca{grid-row:2;grid-column:1 / -1;max-width:none;margin-left:0}
   .busca-tecla{display:none}
+  #busca{padding-right:var(--u2)}
+
+  /* o pé do compositor não cabe em uma linha: o botão cobria "@ nominar" */
+  .caixa-pe{flex-wrap:wrap;gap:var(--u)}
+  .caixa-dicas{order:2;width:100%}
+  .enviar{order:1;width:100%;justify-content:center}
+  .enviar kbd{display:none}          /* ⌘↵ não existe no celular */
+  .caixa-conta{margin-left:auto}
   .sala-fio{padding:var(--u3) var(--u2)}
   .compositor{padding:0 var(--u2) var(--u2)}
   .paleta{left:var(--u2);right:var(--u2)}
+
+  /* a gaveta é uma folha que ENTRA — e que dá para fechar */
+  .moldura .gaveta{position:fixed;top:0;bottom:0;right:0;width:min(88vw,336px);z-index:40;
+    opacity:1;pointer-events:auto;transform:translateX(100%);
+    padding-top:env(safe-area-inset-top);
+    transition:transform var(--t-padrao) var(--ease);box-shadow:var(--sombra-g)}
+  .moldura[data-gaveta="aberta"] .gaveta{transform:none}
+  .moldura[data-gaveta="fechada"] .gaveta{transform:translateX(100%);pointer-events:none}
+  /* 29 e não 35: a regra do breakpoint de tablet dá z-index 30 à gaveta e tem
+     especificidade maior que qualquer coisa que eu escrevesse aqui. O véu
+     abaixo de 30 funciona com as duas regras — medido: com 35 ele engolia
+     os toques nas abas. */
+  .veu-gaveta{display:block;position:fixed;inset:0;z-index:29;background:rgba(16,14,10,.45);
+    opacity:0;pointer-events:none;transition:opacity var(--t-padrao) var(--ease)}
+  .moldura[data-gaveta="aberta"] .veu-gaveta{opacity:1;pointer-events:auto}
+  .gaveta-fecha{display:grid}
+  .gaveta-abas{padding-right:52px}   /* o ✕ mora aqui: as abas param antes dele */
+}
+
+/* ── DEDO, NÃO PONTEIRO ─────────────────────────────────────────────────────
+   Alvo de toque de 44 px (Apple HIG / WCAG 2.5.8). Medido antes: pílulas 26 px,
+   abas 37, ações de mensagem 19. O que cresce é a ÁREA, não o desenho — o texto
+   e o filete continuam do mesmo tamanho. ─────────────────────────────────── */
+@media (pointer:coarse){
+  /* `min-height` e não soma de padding: a altura do alvo passa a ser o CONTRATO,
+     e não o resultado de uma conta que muda quando a fonte muda. */
+  .pilula-cmd{padding:0 14px;min-height:44px;border-radius:22px}
+  .aba{padding:14px 4px;min-height:44px}
+  .trilho-btn{width:44px;height:44px}
+  .enviar{padding:0 var(--u3);min-height:48px}
+  .msg-acao{display:inline-flex;align-items:center;justify-content:center;
+    min-height:44px;min-width:44px;margin:-12px 0}
+  .msg-pe{gap:var(--u3);margin-top:0}
+  .descer{min-height:44px;padding:0 20px}
+  #busca{padding-top:13px;padding-bottom:13px}
+  .selo{width:44px;height:44px;font-size:12px}
+  .gaveta-fecha{width:44px;height:44px}
+  /* no dedo não há hover: as ações da mensagem ficam sempre visíveis */
+  .msg-pe{opacity:1;transform:none}
 }
 
 /* ── MOVIMENTO REDUZIDO — respeito, não decoração ───────────────────────── */

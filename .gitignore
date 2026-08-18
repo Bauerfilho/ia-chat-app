@@ -4,3 +4,9 @@ __pycache__/
 
 # O .icns é gerado a partir do icone.svg por `marca/gerar_icone.py`.
 # Fica versionado de propósito: quem baixa o app não deve precisar de iconutil.
+
+# Notas de trabalho dos agentes: existem para sobreviver a uma queda de energia no
+# meio da tarefa (a regra de contingência da casa), não para virar histórico do
+# repositório. Quem lê o repo quer o resultado, não o rascunho.
+.trabalho-*.md
+PARCIAL-*.md

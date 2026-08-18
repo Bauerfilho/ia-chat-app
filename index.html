@@ -132,8 +132,15 @@
     <div class="paleta" id="paleta" hidden role="listbox" aria-label="Comandos do dono"></div>
   </form>
 
+  <!-- No celular a gaveta cobre a tela: o véu é o jeito de fechar com o polegar,
+       tocando em qualquer lugar fora dela. -->
+  <div class="veu-gaveta" id="veu-gaveta" aria-hidden="true"></div>
+
   <!-- GAVETA -------------------------------------------------------------- -->
   <aside class="gaveta" id="gaveta" aria-label="Painel lateral">
+    <button class="gaveta-fecha" id="gaveta-fecha" aria-label="Fechar o painel lateral">
+      <span aria-hidden="true">✕</span>
+    </button>
     <div class="gaveta-abas" role="tablist" aria-label="Seções do painel">
       <button class="aba" role="tab" id="aba-fio"     aria-controls="pnl-fio"     aria-selected="true"  tabindex="0"  data-pnl="fio">Fio</button>
       <button class="aba" role="tab" id="aba-decisoes" aria-controls="pnl-decisoes" aria-selected="false" tabindex="-1" data-pnl="decisoes">Decisões</button>

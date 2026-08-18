@@ -14,16 +14,50 @@
 const IAS = ['claude','codex','kimi','agy','grok','qwen','ollama','deepseek','dourada','bauer'];
 const DONO = 'bauer';
 
-/* ── comandos do dono ────────────────────────────────────────────────────── */
+/* ── comandos do dono ──────────────────────────────────────────────────────
+   `onde` diz ONDE o comando age, e a paleta MOSTRA isso. Antes havia
+   `pronto:true/false`, e ele mentia dos dois lados: nenhum dos sete chegava a
+   `bin/iachat-comando` — os sete viravam mensagem de chat —, e ainda assim
+   `/plan` anunciava "todas as IAs vivas" e `/concluir` "quem foi designado",
+   insinuando execução que não existia. Os `false` não diziam o que fazer;
+   apareciam na tela e calavam. Comando morto na tela é pior que comando ausente.
+
+     sala     — vira mensagem na sala, e as IAs leem e agem. Não é consolo: é o
+                mecanismo para o qual a sala foi construída.
+     aqui     — atravessa o servidor e responde aqui mesmo. Só LEITURA.
+     terminal — NÃO atravessa. Mata processo ou gasta assinatura do dono, e a
+                paleta entrega a linha pronta para copiar em vez de fingir.
+
+   Por que `terminal` e não uma rota: o servidor roda com `--lan`, e mesmo sem
+   ele a loopback não é fronteira de confiança nesta máquina (ver o comentário
+   de `_ok_token` em `servir.py`: com 127.0.0.1 apareceu na sala uma mensagem
+   assinada `bauer` que ninguém escreveu). Um token vazado que posta mensagem se
+   retrata; um que mata a frota no meio de uma onda, não.
+
+   `/decidi` é `terminal` e não `sala` de propósito: postado como mensagem ele
+   NÃO entra em `decisoes.md`, e uma decisão que existe na sala mas não no
+   registro é a dívida dos dois instrumentos de volta, só que de roupa nova. */
 const COMANDOS = [
-  {cmd:'/goal',     desc:'Enunciar o objetivo da rodada',                quem:'ninguém executa',    pronto:true},
-  {cmd:'/plan',     desc:'A frota ativa planeja junta e devolve o plano', quem:'todas as IAs vivas', pronto:true},
-  {cmd:'/concluir', desc:'Autorizar: pode aplicar',                      quem:'quem foi designado', pronto:true},
-  {cmd:'/parar',    desc:'Abortar a missão em andamento',                quem:'o servidor',         pronto:false},
-  {cmd:'/quem',     desc:'Quem está vivo, no quê, há quanto tempo',      quem:'ia-roster',          pronto:false},
-  {cmd:'/decidi',   desc:'Registrar decisão que todas obedecem',         quem:'ia-decide',          pronto:false},
-  {cmd:'/refaz',    desc:'Redisparar worker morto de onde parou',        quem:'o servidor',         pronto:false},
+  {cmd:'/goal',     desc:'Enunciar o objetivo da rodada',                 onde:'sala',     quem:'ninguém executa — é o enunciado'},
+  {cmd:'/plan',     desc:'A frota ativa planeja junta e devolve o plano', onde:'sala',     quem:'as IAs da sala leem e agem'},
+  {cmd:'/concluir', desc:'Autorizar: pode aplicar',                       onde:'sala',     quem:'quem foi designado no plano'},
+  {cmd:'/quem',     desc:'Quem está vivo, no quê, há quanto tempo',       onde:'aqui',     quem:'lê o estado e responde aqui'},
+  {cmd:'/parar',    desc:'Abortar a missão em andamento',                 onde:'terminal', quem:'mata processo',
+   porque:'mata processo, e matar não tem desfazer.', linha:'iachat-comando parar'},
+  {cmd:'/refaz',    desc:'Redisparar worker morto de onde parou',         onde:'terminal', quem:'gasta assinatura',
+   porque:'redispara uma IA paga, e isso gasta a assinatura dele.', linha:'iachat-comando refaz --ia <ia>'},
+  {cmd:'/decidi',   desc:'Registrar decisão que todas obedecem',          onde:'terminal', quem:'grava no registro',
+   porque:'o registro durável é um arquivo, e ele se escreve no terminal.',
+   linha:'iachat-comando decidi --porque "<o motivo>" "<a decisão>"'},
 ];
+const ONDE = {
+  sala:     {rotulo:'vai para a sala', vindouro:'nao'},
+  aqui:     {rotulo:'responde aqui',   vindouro:'nao'},
+  terminal: {rotulo:'só no terminal',  vindouro:'sim'},
+};
+/* O comando é a PRIMEIRA palavra, e só. `/parar` não casa `/parardetudo`, e
+   texto que apenas cita `/parar` no meio da frase continua sendo conversa. */
+const cmdDe = txt => COMANDOS.find(c => txt === c.cmd || txt.startsWith(c.cmd + ' '));
 
 const $  = (s,r=document)=>r.querySelector(s);
 const $$ = (s,r=document)=>[...r.querySelectorAll(s)];
@@ -35,6 +69,7 @@ const E = {
   enviar:$('#enviar'), enviarRot:$('#enviar-rotulo'), conta:$('#conta'),
   paleta:$('#paleta'), busca:$('#busca'), avisos:$('#avisos'),
   descer:$('#descer'), descerN:$('#descer-n'), moldura:$('.moldura'),
+  veu:$('#veu-gaveta'),
 };
 
 const S = {
@@ -230,8 +265,9 @@ function desenhaFio(){
 
 /* ⚠️ MEDIDO 18/08 na sala real: a regra antiga desta aba procurava o COMANDO
    `/decidi` (ou `/concluir`) no texto — e ele aparece **0 vezes** em 29
-   mensagens, então a aba estava condenada a nascer vazia. `/decidi` nem existe
-   ainda: está como `pronto:false` na lista COMANDOS aqui em cima.
+   mensagens, então a aba estava condenada a nascer vazia. `/decidi` não é digitado
+   na sala: está como `onde:'terminal'` na lista COMANDOS aqui em cima, porque o
+   registro durável dele é um arquivo que só o CLI escreve.
    O que a sala usa de verdade é o MARCADOR no começo da linha, e é isso que o
    `bin/iachat-report` (RE_MARCA) extrai — 8 marcações em 2 mensagens (#26, #29).
    Esta regra é a mesma dele, byte a byte no conjunto de marcadores: uma
@@ -358,18 +394,26 @@ function atualizaDestino(){
    `aria-activedescendant`. Fechada, o campo volta a ser um textarea comum: quem
    escreve na sala não deve ouvir "caixa combinada" o tempo todo. */
 let paletaIdx = 0;
+/* A paleta tem dois modos e eles não se misturam: `lista` é o combobox de
+   comandos (setas navegam, Enter escolhe); `painel` é a RESPOSTA — o resultado
+   do `/quem` ou a linha do terminal. No painel não há opção para navegar, e as
+   setas não podem fingir que há. */
+let paletaModo = 'lista';
 function abrePaleta(prefixo){
   const itens = COMANDOS.filter(c => c.cmd.startsWith(prefixo));
   if (!itens.length) return fechaPaleta();
   paletaIdx = 0;
+  paletaModo = 'lista';
+  E.paleta.setAttribute('role', 'listbox');
+  E.paleta.removeAttribute('aria-label');
   E.paleta.hidden = false;
   E.paleta.innerHTML = itens.map((c,i)=>`
     <button type="button" class="paleta-item" role="option" tabindex="-1"
             id="cmd-${c.cmd.slice(1)}" data-cmd="${c.cmd}"
-            data-vindouro="${c.pronto?'nao':'sim'}" aria-selected="${i===0}">
+            data-vindouro="${ONDE[c.onde].vindouro}" aria-selected="${i===0}">
       <span class="paleta-cmd" translate="no">${c.cmd}</span>
-      <span class="paleta-desc">${c.desc}</span>
-      <span class="paleta-quem">${c.pronto ? c.quem : 'a implementar'}</span>
+      <span class="paleta-desc">${esc(c.desc)}</span>
+      <span class="paleta-quem">${ONDE[c.onde].rotulo}</span>
     </button>`).join('');
   $$('.paleta-item', E.paleta).forEach(b=>
     b.addEventListener('click', ()=> escolhePaleta(b.dataset.cmd)));
@@ -381,6 +425,7 @@ function abrePaleta(prefixo){
 }
 function fechaPaleta(){
   E.paleta.hidden = true;
+  paletaModo = 'lista';
   E.texto.removeAttribute('role');
   E.texto.removeAttribute('aria-expanded');
   E.texto.removeAttribute('aria-controls');
@@ -395,6 +440,77 @@ function marcaPaleta(){
   E.texto.setAttribute('aria-activedescendant', sel.id);
   sel.scrollIntoView({block:'nearest'});
 }
+/* ── a paleta como SUPERFÍCIE DE RESPOSTA ─────────────────────────────────
+   Tudo o que este recurso desenha vive dentro de `#paleta`, que é meu. Três
+   agentes trabalham nesta pasta e `estilo.css` não é minha fronteira — por isso
+   nenhuma classe nova: só `.paleta-item`, `.paleta-cmd`, `.paleta-desc` e
+   `.paleta-quem`, que já existem. */
+function painelPaleta(html, rotulo){
+  fechaPaleta();                       // limpa o combobox: aqui não há opção
+  paletaModo = 'painel';
+  E.paleta.setAttribute('role', 'group');
+  E.paleta.setAttribute('aria-label', rotulo);
+  E.paleta.innerHTML = html;
+  E.paleta.hidden = false;
+  const b = $('[data-copiar]', E.paleta);
+  if (b) b.addEventListener('click', ()=> copia(b.dataset.copiar));
+}
+
+async function copia(txt){
+  try{
+    await navigator.clipboard.writeText(txt);
+    avisa('Linha copiada. <b>Cole no terminal.</b>');
+  }catch{
+    // Sem permissão de área de transferência a linha continua na tela, e
+    // selecionável — dizer "copiei" sem ter copiado seria o mesmo defeito
+    // que este recurso existe para matar.
+    avisa('Não consegui copiar — a linha está aí para selecionar.', 'erro');
+  }
+}
+
+/* O que NÃO atravessa não fica mudo: mostra a linha e o porquê. */
+function mostraLinha(c){
+  painelPaleta(`
+    <div class="paleta-item">
+      <span class="paleta-cmd" translate="no">${c.cmd}</span>
+      <span class="paleta-desc"><b>Só no terminal.</b> ${esc(c.porque || '')}</span>
+      <span class="paleta-quem">não atravessa</span>
+    </div>
+    <div class="paleta-item">
+      <code class="paleta-desc" translate="no">${esc(c.linha)}</code>
+      <button type="button" class="paleta-cmd" data-copiar="${esc(c.linha)}">copiar</button>
+    </div>`, `${c.cmd}: a linha para o terminal`);
+}
+
+/* `/quem` é o único que atravessa, e atravessa porque só LÊ. */
+async function rodaQuem(){
+  painelPaleta('<div class="paleta-item"><span class="paleta-desc">consultando…</span></div>',
+               '/quem: consultando');
+  let d;
+  try{
+    const r = await fetch(url('/api/quem'));
+    d = await r.json();
+    if (!r.ok || d.erro) throw new Error(d.erro || ('HTTP ' + r.status));
+  }catch(e){
+    // Degrada como o cabeçalho deste arquivo promete: servidor sem a rota (o
+    // do bundle é reserva e não tem) vira a linha do terminal, não um erro sem saída.
+    return mostraLinha({cmd:'/quem', linha:'iachat-comando quem',
+      porque:'este servidor não respondeu (' + e.message + '), mas o CLI responde.'});
+  }
+  const linhas = (d.quem || []).map(x=>`
+    <div class="paleta-item">
+      <span class="paleta-cmd" translate="no">${esc(x.ia)}</span>
+      <span class="paleta-desc">${esc(x.estado)} · ${esc(x.fazendo)}</span>
+      <span class="paleta-quem">${esc(x.ha || '')}</span>
+    </div>`).join('');
+  painelPaleta(`
+    <div class="paleta-item">
+      <span class="paleta-cmd" translate="no">${esc(d.missao || '—')}</span>
+      <span class="paleta-desc">${esc(d.estado || 'nenhuma missão aberta')}</span>
+      <span class="paleta-quem">agora</span>
+    </div>${linhas}`, '/quem: quem está vivo');
+}
+
 function escolhePaleta(cmd){
   E.texto.value = cmd + ' ';
   fechaPaleta();
@@ -525,6 +641,12 @@ function abreFluxo(){
 async function envia(){
   const txt = E.texto.value.trim();
   if (!txt) return;
+  // Comando que não é conversa não vira mensagem. Antes, `/parar` no campo era
+  // postado no chat como texto — a sala recebia a palavra e nada parava.
+  const c = cmdDe(txt);
+  if (c && c.onde !== 'sala'){
+    return c.onde === 'aqui' ? rodaQuem() : mostraLinha(c);
+  }
   const alvos = alvosDoTexto(txt);
   E.enviar.disabled = true;
   const rotulo = E.enviarRot.textContent;
@@ -556,7 +678,13 @@ E.texto.addEventListener('input', ()=>{
 });
 
 E.texto.addEventListener('keydown', ev=>{
-  if (!E.paleta.hidden){
+  // No modo `painel` a paleta está VISÍVEL mas não é uma lista de opções: navegar
+  // ali marcaria `aria-selected` numa linha de resposta e o Enter escolheria um
+  // `data-cmd` que não existe. Escape continua fechando, porque fechar é sempre
+  // uma saída legítima.
+  if (!E.paleta.hidden && paletaModo === 'painel'){
+    if (ev.key === 'Escape'){ ev.preventDefault(); fechaPaleta(); return; }
+  } else if (!E.paleta.hidden){
     if (ev.key === 'ArrowDown'){ ev.preventDefault(); return navegaPaleta(1); }
     if (ev.key === 'ArrowUp'){ ev.preventDefault(); return navegaPaleta(-1); }
     if (ev.key === 'Escape'){ ev.preventDefault(); fechaPaleta(); return; }
@@ -624,12 +752,37 @@ $$('.aba').forEach(a=>{
   });
 });
 
+/* No celular a gaveta é uma folha que cobre a tela — então ela nasce FECHADA e
+   tem três saídas: o botão do trilho, o ✕ dentro dela e o véu atrás. Medido em
+   390 px antes disto: ela nascia aberta sobre 86% da tela e nenhum dos botões
+   que a fechavam estava visível. */
+const estreito = () => matchMedia('(max-width:760px)').matches;
+
 function abreGaveta(forcar){
   const aberta = forcar !== undefined ? forcar : E.moldura.dataset.gaveta !== 'aberta';
   E.moldura.dataset.gaveta = aberta ? 'aberta' : 'fechada';
   $('#btn-gaveta').setAttribute('aria-expanded', String(aberta));
+  if (aberta && estreito()) $('#gaveta-fecha').focus();
 }
 $('#btn-gaveta').addEventListener('click', ()=> abreGaveta());
+$('#gaveta-fecha').addEventListener('click', ()=>{ abreGaveta(false); $('#btn-gaveta').focus(); });
+E.veu.addEventListener('click', ()=> abreGaveta(false));
+
+/* A altura que o teclado do celular deixa. `dvh` responde às barras do navegador,
+   não ao teclado virtual: em iOS o layout não encolhe quando ele sobe, e o
+   compositor fica atrás dele. `visualViewport` é o único que enxerga isso. */
+function alturaViva(){
+  const vv = window.visualViewport;
+  if (!vv) return;
+  document.documentElement.style.setProperty('--altura-viva', vv.height + 'px');
+  // o teclado subiu: garante que a última mensagem continua à vista
+  if (S.colado) requestAnimationFrame(()=> desce(false));
+}
+if (window.visualViewport){
+  visualViewport.addEventListener('resize', alturaViva);
+  visualViewport.addEventListener('scroll', alturaViva);
+  alturaViva();
+}
 
 function tema(t){
   document.documentElement.dataset.tema = t;
@@ -644,13 +797,17 @@ document.addEventListener('keydown', ev=>{
   if (meta && ev.key.toLowerCase() === 'k'){ ev.preventDefault(); E.busca.focus(); E.busca.select(); }
   if (meta && ev.key.toLowerCase() === 'j'){ ev.preventDefault(); abreGaveta(); }
   if (meta && ev.shiftKey && ev.key.toLowerCase() === 'l'){ ev.preventDefault(); $('#btn-tema').click(); }
+  if (ev.key === 'Escape' && estreito() && E.moldura.dataset.gaveta === 'aberta'){
+    ev.preventDefault(); abreGaveta(false); $('#btn-gaveta').focus(); return;
+  }
   if (ev.key === 'Escape' && document.activeElement === E.busca){
     E.busca.value = ''; S.filtro = ''; desenhaMsgs(); E.texto.focus();
   }
 });
 
 /* ── arranque ────────────────────────────────────────────────────────────── */
-E.moldura.dataset.gaveta = 'aberta';
+// no celular ela cobriria a conversa inteira; no desktop tem coluna própria
+abreGaveta(!matchMedia('(max-width:760px)').matches);
 try{ const t = localStorage.getItem('ia-chat-tema'); if (t) tema(t); }catch(e){}
 if (window.CONGELADO){                       // export offline: a sala vem dentro do HTML
   const d = window.CONGELADO;
@@ -664,4 +821,5 @@ if (window.CONGELADO){                       // export offline: a sala vem dentr
 }
 ajustaAltura();
 // foco inicial: desktop, campo primário único — é onde a mão dele já está
+// só no ponteiro fino: no celular, focar sozinho abre o teclado e come metade da tela
 if (matchMedia('(pointer:fine)').matches) E.texto.focus();

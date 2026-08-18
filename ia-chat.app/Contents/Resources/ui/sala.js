@@ -69,6 +69,7 @@ const E = {
   enviar:$('#enviar'), enviarRot:$('#enviar-rotulo'), conta:$('#conta'),
   paleta:$('#paleta'), busca:$('#busca'), avisos:$('#avisos'),
   descer:$('#descer'), descerN:$('#descer-n'), moldura:$('.moldura'),
+  veu:$('#veu-gaveta'),
 };
 
 const S = {
@@ -751,12 +752,37 @@ $$('.aba').forEach(a=>{
   });
 });
 
+/* No celular a gaveta é uma folha que cobre a tela — então ela nasce FECHADA e
+   tem três saídas: o botão do trilho, o ✕ dentro dela e o véu atrás. Medido em
+   390 px antes disto: ela nascia aberta sobre 86% da tela e nenhum dos botões
+   que a fechavam estava visível. */
+const estreito = () => matchMedia('(max-width:760px)').matches;
+
 function abreGaveta(forcar){
   const aberta = forcar !== undefined ? forcar : E.moldura.dataset.gaveta !== 'aberta';
   E.moldura.dataset.gaveta = aberta ? 'aberta' : 'fechada';
   $('#btn-gaveta').setAttribute('aria-expanded', String(aberta));
+  if (aberta && estreito()) $('#gaveta-fecha').focus();
 }
 $('#btn-gaveta').addEventListener('click', ()=> abreGaveta());
+$('#gaveta-fecha').addEventListener('click', ()=>{ abreGaveta(false); $('#btn-gaveta').focus(); });
+E.veu.addEventListener('click', ()=> abreGaveta(false));
+
+/* A altura que o teclado do celular deixa. `dvh` responde às barras do navegador,
+   não ao teclado virtual: em iOS o layout não encolhe quando ele sobe, e o
+   compositor fica atrás dele. `visualViewport` é o único que enxerga isso. */
+function alturaViva(){
+  const vv = window.visualViewport;
+  if (!vv) return;
+  document.documentElement.style.setProperty('--altura-viva', vv.height + 'px');
+  // o teclado subiu: garante que a última mensagem continua à vista
+  if (S.colado) requestAnimationFrame(()=> desce(false));
+}
+if (window.visualViewport){
+  visualViewport.addEventListener('resize', alturaViva);
+  visualViewport.addEventListener('scroll', alturaViva);
+  alturaViva();
+}
 
 function tema(t){
   document.documentElement.dataset.tema = t;
@@ -771,13 +797,17 @@ document.addEventListener('keydown', ev=>{
   if (meta && ev.key.toLowerCase() === 'k'){ ev.preventDefault(); E.busca.focus(); E.busca.select(); }
   if (meta && ev.key.toLowerCase() === 'j'){ ev.preventDefault(); abreGaveta(); }
   if (meta && ev.shiftKey && ev.key.toLowerCase() === 'l'){ ev.preventDefault(); $('#btn-tema').click(); }
+  if (ev.key === 'Escape' && estreito() && E.moldura.dataset.gaveta === 'aberta'){
+    ev.preventDefault(); abreGaveta(false); $('#btn-gaveta').focus(); return;
+  }
   if (ev.key === 'Escape' && document.activeElement === E.busca){
     E.busca.value = ''; S.filtro = ''; desenhaMsgs(); E.texto.focus();
   }
 });
 
 /* ── arranque ────────────────────────────────────────────────────────────── */
-E.moldura.dataset.gaveta = 'aberta';
+// no celular ela cobriria a conversa inteira; no desktop tem coluna própria
+abreGaveta(!matchMedia('(max-width:760px)').matches);
 try{ const t = localStorage.getItem('ia-chat-tema'); if (t) tema(t); }catch(e){}
 if (window.CONGELADO){                       // export offline: a sala vem dentro do HTML
   const d = window.CONGELADO;
@@ -791,4 +821,5 @@ if (window.CONGELADO){                       // export offline: a sala vem dentr
 }
 ajustaAltura();
 // foco inicial: desktop, campo primário único — é onde a mão dele já está
+// só no ponteiro fino: no celular, focar sozinho abre o teclado e come metade da tela
 if (matchMedia('(pointer:fine)').matches) E.texto.focus();
