@@ -10,3 +10,7 @@ __pycache__/
 # repositório. Quem lê o repo quer o resultado, não o rascunho.
 .trabalho-*.md
 PARCIAL-*.md
+
+# O endereço do túnel vem COM o token da sala. Nunca entra no repositório: ele é
+# público, e um `git add -A` distraído publicaria a chave de quem entra na sala.
+link-remoto.txt

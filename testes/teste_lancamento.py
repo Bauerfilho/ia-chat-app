@@ -121,5 +121,46 @@ for i, servidor in enumerate(SERVIDORES):
             proc.kill()
         shutil.rmtree(tmp, ignore_errors=True)
 
+# ── checagens de FONTE: cada um dos dois defeitos, isolado ──────────────────
+# O runtime acima pega o SINTOMA (token não chega ao log). Estes dois pegam a
+# CAUSA. Se alguém tirar o `flush=True` ou o `?t=` do probe, fica vermelho
+# mesmo que o runtime ainda passe por acidente (python -u, tty, etc.).
+SERVIR_FONTE = RAIZ / "ui" / "servir.py"
+LANCADOR_FONTE = RAIZ / "ia-chat.app" / "Contents" / "Resources" / "lancador.py"
+
+fonte_servir = SERVIR_FONTE.read_text(encoding="utf-8") if SERVIR_FONTE.is_file() else ""
+checa("fonte servir.py: o arquivo existe", bool(fonte_servir), str(SERVIR_FONTE))
+prints_http = re.findall(r"print\((?:[^()]|\([^()]*\))*\)", fonte_servir)
+prints_url = [p for p in prints_http if "http://" in p]
+checa("fonte servir.py: existe print da URL", bool(prints_url),
+      "sem print da URL o lançador não tem o que ler no log")
+for i, p in enumerate(prints_url, 1):
+    checa(f"fonte servir.py: print da URL #{i} tem flush=True",
+          "flush=True" in p,
+          "print sem flush — o token fica preso no buffer de bloco e o app "
+          f"morre aos 20 s:\n      {p[:180]}")
+# A linha da sala também é lida pelo humano no log do app.
+prints_sala = [p for p in prints_http if "sala:" in p]
+for i, p in enumerate(prints_sala, 1):
+    checa(f"fonte servir.py: print da sala #{i} tem flush=True",
+          "flush=True" in p, p[:180])
+
+fonte_lanc = LANCADOR_FONTE.read_text(encoding="utf-8") if LANCADOR_FONTE.is_file() else ""
+checa("fonte lancador.py: o arquivo existe", bool(fonte_lanc), str(LANCADOR_FONTE))
+bloco = re.search(r"def responde\b.*?(?=\ndef |\Z)", fonte_lanc, flags=re.S)
+checa("fonte lancador.py: existe responde()", bloco is not None)
+if bloco:
+    corpo = bloco.group(0)
+    checa("fonte lancador.py: responde() recebe o token",
+          re.search(r"def responde\([^)]*\btoken\b", corpo) is not None,
+          "responde() sem parâmetro token — o probe não tem como autenticar")
+    checa("fonte lancador.py: o probe de /api/estado anexa ?t=",
+          "/api/estado" in corpo and "?t=" in corpo,
+          "responde() bate em /api/estado sem o token — 401 eterno, "
+          "alerta 'o servidor não respondeu' com o servidor vivo")
+checa("fonte lancador.py: espera_pronto sonda COM o token do log",
+      "responde(porta, token" in fonte_lanc,
+      "espera_pronto() não passa o token ao probe")
+
 print(f"\n{_ok} ✔  {_falhou} ✗")
 sys.exit(1 if _falhou else 0)

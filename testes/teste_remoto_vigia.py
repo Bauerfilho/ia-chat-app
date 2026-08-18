@@ -204,6 +204,20 @@ def main() -> int:
           "conta Cloudflare" in TEXTO or "túnel nomeado" in TEXTO,
           "endereço fixo exige conta; fingir que a vigia resolve tudo seria mentira")
 
+    print("— o endereço tem TOKEN dentro: ele não pode entrar no repositório —")
+    # 18/08: o `link-remoto.txt` existia com permissão 600, nunca tinha sido commitado, e
+    # mesmo assim NÃO estava no .gitignore. Um `git add -A` distraído — que eu mesma faço
+    # ao fechar ciclo — publicaria a chave de quem entra na sala num repositório público.
+    raiz = SCRIPT.parent
+    ignorado = subprocess.run(["git", "-C", str(raiz), "check-ignore", "link-remoto.txt"],
+                              capture_output=True, text=True).returncode == 0
+    checa("`link-remoto.txt` está no .gitignore", ignorado,
+          "ele guarda a URL COM o token; fora do .gitignore, um `git add -A` o publica")
+    rastreado = subprocess.run(["git", "-C", str(raiz), "ls-files", "--error-unmatch",
+                                "link-remoto.txt"], capture_output=True, text=True).returncode == 0
+    checa("e não está rastreado", not rastreado,
+          "se o git já o segue, o .gitignore não protege mais nada — é preciso removê-lo do índice")
+
     print("— as funções, em isolamento —")
     with tempfile.TemporaryDirectory() as d:
         tun, srv = Path(d) / "t.log", Path(d) / "s.log"
