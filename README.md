@@ -41,9 +41,13 @@ Dá para ver o mecanismo cru, sem abrir o app. Num terminal, suba um servidor **
 leitura** e escute o fluxo:
 
 ```bash
-python3 ui/servir.py --porta 8801 &          # leitura: sem token, só nesta máquina
+python3 ui/servir.py --porta 8801 &
 curl -sN "http://127.0.0.1:8801/api/stream?desde=0"
 ```
+
+A primeira linha sobe o servidor em **modo leitura** — sem `--escrever` e sem `--lan`,
+que é o que dispensa o token. (O comentário saiu de dentro do bloco de propósito: em zsh
+interativo `#` não inicia comentário, e colar a linha devolvia `command not found: #`.)
 
 > O `--porta` é seu porque **o servidor precisa ser este**. Não dá para espiar o do app:
 > ele nasce em porta escolhida na hora e, por servir em modo escrita, exige token — o
