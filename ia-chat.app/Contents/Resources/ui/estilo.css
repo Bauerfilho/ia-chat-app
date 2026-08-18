@@ -24,29 +24,29 @@
   --ouro:#B08D3F;          /* traço, filete, brilho (vive sobre carvão: 5.93) */
   --ouro-claro:#D4B25F;
   --ouro-brilho:#E8CE8E;
-  --ouro-tinta:#886C2E;    /* ouro LEGÍVEL sobre palha: 4.61 medido */
-  --ouro-veu:rgba(176,141,63,.14);
+  --ouro-tinta:#786029;    /* ouro LEGÍVEL sobre o VÉU dourado: 4.61 medido */
+  --ouro-veu:rgba(176,141,63,.10);
   --ouro-fio:rgba(176,141,63,.32);
 
   /* semânticas — estado tem cor com significado */
-  --ok:#4E7B3B;      --ok-viva:#5E9249;
-  --atencao:#9B6416; --atencao-viva:#B6781E;
+  --ok:#497337;      --ok-viva:#5E9249;
+  --atencao:#915E15; --atencao-viva:#C58220;
   --erro:#A9382B;    --erro-viva:#D16457;
   --info:#396B96;    --info-viva:#518ABA;
 
   /* cor por IA — DUAS por IA: "viva" sobre carvão, "tinta" sobre palha.
      Mesma matiz, contraste medido nos dois fundos. */
-  --claude:#D97757;   --claude-t:#BD4C26;
-  --codex:#12A594;    --codex-t:#0B7E71;
-  --kimi:#856EFF;     --kimi-t:#6C50FF;
-  --agy:#4285F4;      --agy-t:#0E65F7;
-  --grok:#E8EDF2;     --grok-t:#66717F;
-  --qwen:#B763CC;     --qwen-t:#AA3FC4;
-  --ollama:#E0982A;   --ollama-t:#9A6413;
-  --deepseek:#4F80F0; --deepseek-t:#2965F2;
-  --dourada:#C9A227;  --dourada-t:#886C17;
-  --bauer:#D4B25F;    --bauer-t:#886C2E;   /* o dono: ouro, não é IA */
-  --anonima:#8A7F70;  --anonima-t:#655B4E;
+  --claude:#D97757;   --claude-t:#B14724;
+  --codex:#12A594;    --codex-t:#0A7569;
+  --kimi:#856EFF;     --kimi-t:#6244FF;
+  --agy:#4285F4;      --agy-t:#085DED;
+  --grok:#E8EDF2;     --grok-t:#5F6977;
+  --qwen:#B866CD;     --qwen-t:#A039BA;
+  --ollama:#E0982A;   --ollama-t:#905E12;
+  --deepseek:#4F80F0; --deepseek-t:#1A5AF1;
+  --dourada:#C9A227;  --dourada-t:#806516;
+  --bauer:#D4B25F;    --bauer-t:#7F652B;   /* o dono: ouro, não é IA */
+  --anonima:#8F8475;  --anonima-t:#655B4E;
 
   /* superfícies do tema claro */
   --fundo:var(--palha-200);
@@ -327,11 +327,21 @@ code,kbd,.num{font-family:var(--mono); font-variant-numeric:tabular-nums}
   border:1px solid var(--ouro-fio);white-space:nowrap}
 .msg-corpo .caminho{font-family:var(--mono);font-size:12.5px;color:var(--tinta-2);
   border-bottom:1px dashed var(--borda-forte)}
+/* A pílula é de PAPEL, não de cor: fundo `--superf-alta` com filete e texto na cor
+   da IA. Tingir o fundo com a própria cor escurecia o papel embaixo do texto e
+   comia o contraste (medido: 4.15 -> 3.66). Assim a cor fica onde ela comunica —
+   no traço e na palavra — e a legibilidade sobe em vez de descer. */
 .mencao{display:inline-flex;align-items:center;padding:1px 7px 1px 5px;border-radius:11px;
   font:600 12px/1.5 var(--corpo);color:var(--ia-t,var(--anonima-t));
-  background:color-mix(in srgb,var(--ia-t,var(--anonima-t)) 10%,transparent);
-  border:1px solid color-mix(in srgb,var(--ia-t,var(--anonima-t)) 26%,transparent)}
-.mencao--todas{color:var(--ouro-tinta);background:var(--ouro-veu);border-color:var(--ouro-fio)}
+  background:var(--superf-alta);
+  border:1px solid color-mix(in srgb,var(--ia-t,var(--anonima-t)) 34%,transparent)}
+/* No cartão do dono o papel é carvão: ali vale a variante VIVA, como no trilho. */
+.msg--dono .mencao{color:var(--ia,var(--anonima));
+  background:color-mix(in srgb,var(--ia,var(--anonima)) 10%,transparent);
+  border-color:color-mix(in srgb,var(--ia,var(--anonima)) 38%,transparent)}
+.mencao--todas{color:var(--ouro-tinta);background:var(--superf-alta);border-color:var(--ouro-fio)}
+.msg--dono .mencao--todas{color:var(--ouro-brilho);background:rgba(212,178,95,.10);
+  border-color:rgba(212,178,95,.38)}
 
 .msg-pe{margin-top:7px;display:flex;gap:var(--u2);opacity:0;
   transform:translateY(-3px);
@@ -396,15 +406,20 @@ code,kbd,.num{font-family:var(--mono); font-variant-numeric:tabular-nums}
   transition:border-color var(--t-padrao) var(--ease),background var(--t-padrao) var(--ease)}
 .destino-seta{color:var(--ouro-tinta)}
 .destino-texto b{color:var(--ouro-tinta);font-weight:600}
-.destino[data-modo="nominada"]{border-color:color-mix(in srgb,var(--alvo,var(--ouro-tinta)) 34%,transparent);
-  background:linear-gradient(to bottom,color-mix(in srgb,var(--alvo,var(--ouro-tinta)) 9%,transparent),transparent)}
+/* Nominada: a cor troca no FILETE e na PALAVRA, não no papel. O tingimento do fundo
+   empilhava sobre o véu dourado e derrubava o texto para 4.09 — e o destino é a
+   informação que menos pode ficar difícil de ler. */
+.destino[data-modo="nominada"]{border-color:color-mix(in srgb,var(--alvo,var(--ouro-tinta)) 46%,transparent);
+  background:var(--superf-alta)}
 .destino[data-modo="nominada"] .destino-seta{color:var(--alvo)}
 .destino[data-modo="nominada"] .destino-texto b{color:var(--alvo)}
 .destino-alvos{list-style:none;display:flex;gap:5px;margin:0 0 0 auto;padding:0}
 .destino-alvo{width:19px;height:19px;border-radius:50%;display:grid;place-items:center;
   font:700 9px/1 var(--corpo);color:var(--ia-t);
-  background:color-mix(in srgb,var(--ia-t) 12%,transparent);
-  border:1px solid color-mix(in srgb,var(--ia-t) 32%,transparent);
+  /* papel opaco: a 9px é o texto mais frágil da tela, e ele estava lendo sobre
+     dois véus empilhados (o dourado da faixa + o da própria cor) — 3.82 medido */
+  background:var(--superf-alta);
+  border:1px solid color-mix(in srgb,var(--ia-t) 46%,transparent);
   transition:opacity var(--t-padrao) var(--ease),filter var(--t-padrao) var(--ease)}
 .destino-alvo[data-aceso="nao"]{opacity:.26;filter:saturate(.2)}
 
@@ -459,7 +474,9 @@ code,kbd,.num{font-family:var(--mono); font-variant-numeric:tabular-nums}
 .paleta-cmd{font-family:var(--mono);font-size:13px;font-weight:600;color:var(--ouro-tinta);
   min-width:88px}
 .paleta-desc{font-size:12.5px;color:var(--tinta-2);flex:1}
-.paleta-quem{font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--tinta-3)}
+/* --tinta-2, não --tinta-3: no item destacado o véu dourado clareia o fundo e o
+   terciário cai para 4.00 no tema carvão. Este rótulo diz QUEM executa o comando. */
+.paleta-quem{font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--tinta-2)}
 .paleta-item[data-vindouro="sim"] .paleta-quem{color:var(--atencao)}
 
 /* ── GAVETA ─────────────────────────────────────────────────────────────── */

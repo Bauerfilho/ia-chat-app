@@ -20,8 +20,12 @@ import argparse
 import json
 import mimetypes
 import os
+import base64
 import secrets
+import select
+import socket
 import sys
+import threading
 import time
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -33,6 +37,63 @@ import iachat_core as core  # noqa: E402
 
 UI = Path(__file__).resolve().parent
 CFG = {"escrever": False, "papel": "bauer", "token": ""}
+
+# O favicon viaja DENTRO deste arquivo, em base64, e não como um arquivo ao lado.
+# Motivo medido, não estético: `montar.sh` copia para o bundle uma lista fixa de
+# quatro nomes (index.html, estilo.css, sala.js, servir.py). Um `favicon.ico`
+# solto em `ui/` existiria no repo e faltaria no `.app` — o app instalado ficaria
+# sem ícone na aba, que é exatamente o defeito que se quer fechar. São 1786 B.
+# Fonte: marca/favicon.ico (16 e 32 px, ambos renderizados do vetor). Para
+# regerar depois de mexer na marca:  python3 marca/gerar_icone.py favicon
+FAVICON = base64.b64decode(
+    "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"
+    "gXNOTKiVGgAAAABJRU5ErkJggg=="
+)
+
+
+# ─── TETO DE CONEXÕES AO VIVO ────────────────────────────────────────────────
+# Cada `/api/stream` é um laço infinito numa thread própria. Sem teto, quantas
+# threads existem é decisão de quem se conecta — e com `--lan` quem se conecta não é
+# necessariamente o dono.
+#
+# 16, e o critério é demanda real × folga: o dono em até três aparelhos (Mac, celular,
+# tablet), uma janela segura UM stream, e a reconexão do EventSource pode sobrepor o
+# stream velho ao novo por instantes — pico honesto perto de 6. 16 dá ~2,5× de folga e
+# ainda assim é um número, não o infinito. Teto que nunca dispara é enfeite; teto
+# apertado recusa o dono na própria casa. Mesmo número do servidor do bundle.
+TETO_SSE = 16
+_SSE = {"vivas": 0}
+_SSE_TRAVA = threading.Lock()
 
 
 def ultima() -> int:
@@ -102,6 +163,40 @@ class Sala(BaseHTTPRequestHandler):
     def _nega(self):
         self._json({"erro": "token inválido ou ausente"}, 401)
 
+    def _lotado(self):
+        """503 + Retry-After: a sala está cheia de ouvintes, não quebrada.
+
+        503 e não 429: não é limite por cliente, é capacidade do servidor. O
+        `Retry-After` é o que separa "volte já" de "desista" — e é o que um cliente
+        automático precisa para não martelar a porta.
+        """
+        corpo = json.dumps(
+            {"erro": f"limite de {TETO_SSE} conexões ao vivo atingido"},
+            ensure_ascii=False,
+        ).encode()
+        self.send_response(503)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(corpo)))
+        self.send_header("Retry-After", "5")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(corpo)
+
+    def _peer_sumiu(self) -> bool:
+        """O cliente foi embora? Descobre sem escrever nada.
+
+        O laço só percebia a aba fechada na escrita seguinte — até 15 s depois, no
+        keep-alive. Sem teto isso era só uma thread ociosa; COM teto é uma VAGA presa,
+        e o dono que fecha e reabre a janela algumas vezes tomaria 503 na própria casa.
+        `select` sem espera + `MSG_PEEK` de zero byte é o fim de arquivo do TCP: não
+        consome nada de quem continua vivo.
+        """
+        try:
+            pronto, _, _ = select.select([self.connection], [], [], 0)
+            return bool(pronto) and self.connection.recv(1, socket.MSG_PEEK) == b""
+        except OSError:
+            return True
+
     def _estatico(self, nome: str, semear: bool = False):
         alvo = (UI / nome).resolve()
         if not alvo.is_file() or UI not in alvo.parents:
@@ -114,7 +209,12 @@ class Sala(BaseHTTPRequestHandler):
         if semear and CFG["token"]:
             self.send_header(
                 "Set-Cookie",
-                f"iachat_t={CFG['token']}; Path=/; SameSite=Strict; Max-Age=86400",
+                # `HttpOnly` porque o JS desta interface NUNCA lê o cookie — quem o
+                # devolve é o navegador, sozinho. Sem ele, um XSS futuro leria o token,
+                # que dá escrita na sala com o nome do dono. A defesa custa zero e
+                # existe para o dia em que alguém errar uma linha. (teste_cookie.py)
+                f"iachat_t={CFG['token']}; Path=/; SameSite=Strict; HttpOnly; "
+                "Max-Age=86400",
             )
         self.send_header("Content-Type", f"{tipo}; charset=utf-8")
         self.send_header("Content-Length", str(len(corpo)))
@@ -132,9 +232,14 @@ class Sala(BaseHTTPRequestHandler):
         if u.path == "/":
             return self._estatico("index.html", semear=True)
         if u.path == "/favicon.ico":
-            self.send_response(204)
-            self.send_header("Content-Length", "0")
+            # O navegador pede esta rota sozinho, sem ninguém mandar. Responder
+            # 204 fazia a aba e a janela em modo app caírem no ícone genérico.
+            self.send_response(200)
+            self.send_header("Content-Type", "image/x-icon")
+            self.send_header("Content-Length", str(len(FAVICON)))
+            self.send_header("Cache-Control", "no-store")
             self.end_headers()
+            self.wfile.write(FAVICON)
             return
         if u.path == "/api/estado":
             return self._json({"ultima": ultima()})
@@ -149,6 +254,17 @@ class Sala(BaseHTTPRequestHandler):
         self._json({"erro": "rota inexistente"}, 404)
 
     def _stream(self, desde: int):
+        with _SSE_TRAVA:
+            if _SSE["vivas"] >= TETO_SSE:
+                return self._lotado()
+            _SSE["vivas"] += 1
+        try:
+            self._transmite(desde)
+        finally:
+            with _SSE_TRAVA:
+                _SSE["vivas"] -= 1
+
+    def _transmite(self, desde: int):
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream; charset=utf-8")
         self.send_header("Cache-Control", "no-store")
@@ -174,6 +290,8 @@ class Sala(BaseHTTPRequestHandler):
                         self.wfile.write(b": .\n\n")
                         self.wfile.flush()
                         batida = 0.0
+                if self._peer_sumiu():
+                    return          # devolve a vaga em ≤1 s, não em ≤15 s
                 time.sleep(1.0)
         except (BrokenPipeError, ConnectionResetError, OSError):
             return

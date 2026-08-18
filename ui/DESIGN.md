@@ -51,19 +51,20 @@ compositor, cartão do dono) vivem sobre **carvão**; sobre a palha, a cor da IA
 mais chique.
 
 Onde a cor precisa mesmo ser texto sobre palha, existe uma segunda variante — a **tinta** —, com
-a mesma matiz escurecida até bater 4,6:
+a mesma matiz escurecida até bater 4,6 **sobre `--palha-200`, que é o fundo real da
+sala** — calibrar contra `--palha-100` deixava tudo em 4,14:
 
 | IA | viva (sobre carvão) | tinta (sobre palha) |
 |---|---|---|
-| claude | `#D97757` | `#BD4C26` |
-| codex | `#12A594` | `#0B7E71` |
-| kimi | `#856EFF` | `#6C50FF` |
-| agy | `#4285F4` | `#0E65F7` |
-| grok | `#E8EDF2` | `#66717F` |
-| qwen | `#B763CC` | `#AA3FC4` |
-| ollama | `#E0982A` | `#9A6413` |
-| deepseek | `#4F80F0` | `#2965F2` |
-| dourada | `#C9A227` | `#886C17` |
+| claude | `#D97757` | `#B14724` |
+| codex | `#12A594` | `#0A7569` |
+| kimi | `#856EFF` | `#6244FF` |
+| agy | `#4285F4` | `#085DED` |
+| grok | `#E8EDF2` | `#5F6977` |
+| qwen | `#B866CD` | `#A039BA` |
+| ollama | `#E0982A` | `#905E12` |
+| deepseek | `#4F80F0` | `#1A5AF1` |
+| dourada | `#C9A227` | `#806516` |
 
 O **dono não tem cor de IA**: ele é ouro. A mensagem dele não recebe traço — recebe o cartão de
 carvão com filete dourado. Ele não é par, e a interface diz isso sem legenda.
@@ -81,7 +82,25 @@ cada IA e nos avisos.
 existe `--tinta-3-carvao`, separado. Sem essa separação, o texto pequeno do trilho ficava em 3,95
 no tema claro: um defeito que só apareceu na medição do DOM, nunca no CSS.
 
-**Resultado final medido:** 0 falhas em 54 pares testados, nos dois temas.
+**Resultado final medido:** 0 falhas nos dois temas — 97 pares no `teste_contraste.py` e 157
+elementos medidos no DOM renderizado, em todos os estados (destino para todas, destino nominado
+nas 10 IAs, paleta de comandos aberta e destacada, as quatro gavetas).
+
+### A regra que nasceu da auditoria: papel no fundo, cor no filete e na palavra
+
+A pílula de menção, o avatar do destino e a faixa nominada tingiam o **fundo** com a cor da IA.
+Parecia inofensivo — 10% de véu — mas o véu escurece o papel debaixo do texto, e o texto era da
+mesma cor: quanto mais forte a identidade, pior a leitura. Onde dois véus se empilhavam (o
+dourado da faixa + o da cor), o par caía para **3,50**.
+
+A correção não foi escurecer a cor até caber no véu — isso mudaria a identidade em todo lugar
+para consertar três componentes. Foi inverter a regra: **o fundo é papel, a cor vive no filete e
+na palavra.** A pílula continua sendo da IA (filete a 34-46% e texto na cor), o contraste sobe
+em vez de descer, e a regra vale para qualquer cor que entre na frota depois — inclusive as
+claras, como o violeta do kimi, que era a que estourava primeiro.
+
+Dentro do cartão do dono o papel é carvão, e ali vale a variante **viva** — a mesma lei do
+trilho, agora escrita como regra e não como coincidência.
 
 ---
 
@@ -280,3 +299,16 @@ o dono é removido da lista de presença e nunca é alvo de "todas", mesmo estan
 | `05-chegada-ao-vivo.png` | mensagem chegando por SSE, presença acendendo |
 | `06-decisoes-vigentes.png` | a gaveta de decisões |
 | `07-copia-congelada-offline.png` | o export aberto **sem nenhuma API no ar** — estado *cópia congelada*, envio bloqueado |
+| `08-contraste-corrigido-palha.png` | depois da correção de contraste: a paleta e o destino nominado intactos |
+
+---
+
+## 14. O que os testes desta pasta guardam
+
+| teste | o que trava |
+|---|---|
+| `testes/teste_contraste.py` | 97 pares de cor, nos dois temas, **compostos como o navegador compõe** — véu sobre superfície, não token contra token. Reprovou 39 vezes antes de passar. |
+| `testes/teste_cookie.py` | o cookie do token nasce `HttpOnly`, `SameSite=Strict`, `Path=/` — e continua autenticando. Guarda também o fato que torna `HttpOnly` grátis: o `sala.js` nunca lê `document.cookie`. |
+
+Os dois nasceram vermelhos e passaram depois da correção — é o que os torna testes, e não
+carimbos.

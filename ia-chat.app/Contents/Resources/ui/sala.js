@@ -96,7 +96,9 @@ function corpoHTML(txt){
     '$1<span class="caminho">$2</span>');
   h = h.replace(/(^|\s)@(all|todas)\b/gi, '$1<span class="mencao mencao--todas">@todas</span>');
   h = h.replace(/(^|\s)@([a-z0-9_-]{2,20})\b/gi,
-    (_,a,n)=>`${a}<span class="mencao" style="--ia-t:var(--${corDe(n.toLowerCase())}-t)">@${esc(n)}</span>`);
+    // as DUAS variantes: `-t` para o papel palha, viva para o cartão do dono (carvão)
+    (_,a,n)=>{ const c = corDe(n.toLowerCase());
+      return `${a}<span class="mencao" style="--ia-t:var(--${c}-t);--ia:var(--${c})">@${esc(n)}</span>`; });
 
   return h.split(/\n{2,}/).map(bloco=>{
     const linhas = bloco.split('\n');

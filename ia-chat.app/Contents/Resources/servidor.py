@@ -33,8 +33,10 @@ import json
 import os
 import re
 import secrets
+import select
 import socket
 import sys
+import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from http.cookies import SimpleCookie
@@ -46,6 +48,26 @@ sys.path.insert(0, str(BIN))
 import iachat_core as core  # noqa: E402
 
 CFG = {"escrever": False, "token": "", "redigir": False, "papel": "bauer"}
+
+# Corpo de POST sem teto entrega a memória do processo a quem se conectar. 256 KB é
+# folgado para uma mensagem de sala (o teto da sala inteira é 200 KB) e barato de
+# recusar antes de ler. Mesmo número do `ui/servir.py`: teto que difere entre os dois
+# servidores é teto que some quando se troca de servidor.
+TETO_CORPO = 262144
+
+# ─── TETO DE CONEXÕES AO VIVO ────────────────────────────────────────────────
+# Cada `/api/stream` é um laço infinito numa thread própria. Sem teto, quantas
+# threads existem é decisão de quem se conecta — e com `--lan` quem se conecta não é
+# necessariamente o dono.
+#
+# 16, e o critério é demanda real × folga: o dono em até três aparelhos (Mac, celular,
+# tablet), uma janela segura UM stream, e a reconexão do EventSource pode sobrepor o
+# stream velho ao novo por instantes — pico honesto perto de 6. 16 dá ~2,5× de folga e
+# ainda assim é um número, não o infinito. Teto que nunca dispara é enfeite; teto
+# apertado recusa o dono na própria casa.
+TETO_SSE = 16
+_SSE = {"vivas": 0}
+_SSE_TRAVA = threading.Lock()
 
 # ─────────────────────────────────────────────────────────────────────────────
 # REDAÇÃO — a sala é escrita por IAs, e IA já vazou chave em texto plano nesta
@@ -147,6 +169,40 @@ class Sala(BaseHTTPRequestHandler):
     def _nega(self):
         self._json({"erro": "token inválido ou ausente"}, 401)
 
+    def _lotado(self):
+        """503 + Retry-After: a sala está cheia de ouvintes, não quebrada.
+
+        503 e não 429: não é limite por cliente, é capacidade do servidor. O
+        `Retry-After` é o que separa "volte já" de "desista" — e é o que um cliente
+        automático precisa para não martelar a porta.
+        """
+        corpo = json.dumps(
+            {"erro": f"limite de {TETO_SSE} conexões ao vivo atingido"},
+            ensure_ascii=False,
+        ).encode()
+        self.send_response(503)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(corpo)))
+        self.send_header("Retry-After", "5")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(corpo)
+
+    def _peer_sumiu(self) -> bool:
+        """O cliente foi embora? Descobre sem escrever nada.
+
+        O laço só percebia a aba fechada na escrita seguinte — até 15 s depois, no
+        keep-alive. Sem teto isso era só uma thread ociosa; COM teto é uma VAGA presa,
+        e o dono que fecha e reabre a janela algumas vezes tomaria 503 na própria casa.
+        `select` sem espera + `MSG_PEEK` de zero byte é o fim de arquivo do TCP: não
+        consome nada de quem continua vivo.
+        """
+        try:
+            pronto, _, _ = select.select([self.connection], [], [], 0)
+            return bool(pronto) and self.connection.recv(1, socket.MSG_PEEK) == b""
+        except OSError:
+            return True
+
     # — GET ————————————————————————————————————————————————————————————
     def do_GET(self):
         u = urlparse(self.path)
@@ -211,6 +267,17 @@ class Sala(BaseHTTPRequestHandler):
         """Sem Content-Length e com `Connection: close`: o corpo acaba quando a
         conexão acaba — é o modelo de streaming do HTTP/1.1, e é o que o
         EventSource espera. Nada de chunked manual."""
+        with _SSE_TRAVA:
+            if _SSE["vivas"] >= TETO_SSE:
+                return self._lotado()
+            _SSE["vivas"] += 1
+        try:
+            self._transmite(desde)
+        finally:
+            with _SSE_TRAVA:
+                _SSE["vivas"] -= 1
+
+    def _transmite(self, desde: int):
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream; charset=utf-8")
         self.send_header("Cache-Control", "no-store")
@@ -240,6 +307,8 @@ class Sala(BaseHTTPRequestHandler):
                         self.wfile.write(b": .\n\n")
                         self.wfile.flush()
                         batida = 0.0
+                if self._peer_sumiu():
+                    return          # devolve a vaga em ≤1 s, não em ≤15 s
                 time.sleep(1.0)
         except (BrokenPipeError, ConnectionResetError, OSError):
             return  # aba fechada, celular dormiu: o EventSource reconecta sozinho
@@ -263,16 +332,43 @@ class Sala(BaseHTTPRequestHandler):
             f"http://{ip_local()}:{self.server.server_address[1]}",
         ):
             return self._json({"erro": f"origem recusada: {origem}"}, 403)
+        # Antes de LER o corpo, saber quanto ele diz ter. `int(self.headers[...])`
+        # levantava KeyError quando o cabeçalho não vinha, o KeyError caía no
+        # `except Exception` lá embaixo e o cliente recebia 500 — o código que diz
+        # "o erro é meu" para uma falta que era dele. 411 é o único status que
+        # nomeia exatamente o que faltou; 400 para o que veio, mas veio torto.
+        bruto = self.headers.get("Content-Length")
+        if bruto is None:
+            self.close_connection = True
+            return self._json({"erro": "Content-Length obrigatório"}, 411)
         try:
-            dados = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            n = int(bruto)
+        except ValueError:
+            self.close_connection = True
+            return self._json({"erro": f"Content-Length inválido: {bruto!r}"}, 400)
+        if n < 0:
+            # `rfile.read(-1)` leria até o fim da conexão: o número negativo não é
+            # um pedido pequeno, é um pedido sem fim.
+            self.close_connection = True
+            return self._json({"erro": f"Content-Length negativo: {n}"}, 400)
+        if n > TETO_CORPO:
+            # Fechar é parte da recusa: o corpo que não foi lido continuaria no
+            # socket e o keep-alive tentaria interpretá-lo como o pedido seguinte.
+            self.close_connection = True
+            return self._json({"erro": "corpo grande demais"}, 413)
+        try:
+            dados = json.loads(self.rfile.read(n) or b"{}")
             # A identidade é do SERVIDOR, nunca do cliente. Auditoria de 18/08:
             # aceitar `de` do payload permitia a qualquer um com o token postar
             # assinando como @claude, @codex ou @bauer — foi assim que apareceu na
             # sala, em 17/08, uma mensagem assinada `bauer` que ele não escreveu.
             # Quem escolhe quem assina é o `--papel` com que o servidor subiu.
+            # `dados["texto"]` cru era o mesmo defeito do Content-Length uma linha
+            # abaixo: corpo `{}` virava KeyError e voltava 500. Com `.get`, quem
+            # recusa é o núcleo — "mensagem vazia", ValueError, 400.
             r = core.post(
                 de=CFG["papel"],
-                texto=dados["texto"],
+                texto=(dados.get("texto") or "").strip(),
                 para=dados.get("para"),
             )
             return self._json(r)

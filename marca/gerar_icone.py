@@ -269,6 +269,41 @@ def escrever(tema, nome):
     print(f"{tema:6s} -> {nome} (+ -pequeno.svg) e {len(TAMANHOS)} PNGs em render/{tema}/")
 
 
+def favicon():
+    """favicon.ico — 16+32, tema PRETO, e o base64 que o servidor embute.
+
+    Tema preto por medida, não por gosto: contra a aba clara do Chrome
+    (#DEE1E6) o corpo palha dá 1.04:1 — a silhueta simplesmente não existe.
+    O corpo preto dá 14.42:1 na aba clara e, na aba escura, quem carrega a
+    forma são as três janelas em palha (16.50:1 contra o próprio corpo).
+
+    ICO e não PNG porque a rota que o navegador pede sozinho é `/favicon.ico`,
+    e ICO é o único formato que todo navegador aceita ali sem negociação.
+    16 e 32 saem do vetor hintado, cada um no seu tamanho — um ICO que só
+    guarda 32 e deixa o navegador encolher desfaz justamente o hinting.
+    """
+    import base64
+    import io
+    from PIL import Image
+
+    quadros = []
+    for n in (16, 32):
+        buf = io.BytesIO()
+        png("preto", n, buf)
+        buf.seek(0)
+        quadros.append(Image.open(buf).convert("RGBA"))
+
+    alvo = os.path.join(AQUI, "favicon.ico")
+    # `sizes` declara os slots; `append_images` substitui a redução automática
+    # pelo quadro hintado daquele tamanho — sem isso o 16 sai de um downscale
+    # do 32 e o hinting que custou o desenho todo se perde.
+    quadros[1].save(alvo, format="ICO", sizes=[(16, 16), (32, 32)],
+                    append_images=[quadros[0]])
+    bruto = open(alvo, "rb").read()
+    print(f"ico    -> {alvo} ({len(bruto)} B) · base64 {len(base64.b64encode(bruto))} B")
+    return bruto
+
+
 def icns(tema, nome_icns):
     """Monta o .iconset e chama iconutil (nativo do macOS)."""
     import shutil
@@ -298,3 +333,5 @@ if __name__ == "__main__":
     if alvo in ("preto", "ambos"):
         escrever("preto", "icone-preto.svg")
         icns("preto", "icone-preto.icns")
+    if alvo in ("favicon", "ambos"):
+        favicon()

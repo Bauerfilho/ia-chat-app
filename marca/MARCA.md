@@ -97,6 +97,69 @@ Prova em `render/prova-16.png` (ampliado com NEAREST: o pixel real, sem suavizar
 
 Nenhum PNG é redução de outro: cada tamanho sai do vetor.
 
+## O favicon — e por que ele é preto
+
+O favicon é a **versão preta**, e isso não é gosto. Medido contra o fundo da aba
+do Chrome:
+
+```
+corpo palha #E9DCBE  vs  aba clara #DEE1E6 .....  1.04:1    a silhueta não existe
+corpo preto #12110C  vs  aba clara #DEE1E6 ..... 14.42:1
+corpo preto          vs  aba escura #202124 .....  1.17:1 — mas aí quem carrega a
+                                                   forma são as janelas em palha
+                                                   (16.50:1 contra o próprio corpo)
+```
+
+O ícone do app (Dock) continua palha: lá ele tem 100px e fundo variado. Na aba
+ele tem 16px e fundo claro fixo — ambientes diferentes, decisões diferentes.
+
+**Formato: `.ico` com 16 e 32**, não SVG nem PNG.
+
+- SVG não serve: o mestre tem 10 KB de trama e gradientes que somem em 16px, e a
+  rota que o navegador pede sozinho é `/favicon.ico`.
+- PNG único serviria, mas obrigaria o navegador a encolher 32→16 — o que desfaz
+  exatamente o hinting de pixel que o desenho paga para existir.
+- No `.ico`, **os dois tamanhos são renderizados do vetor**, cada um no seu.
+  Auditado: os quadros dentro do arquivo são byte-idênticos ao render direto
+  (diferença máxima 0/255). Total: **1.786 B**.
+
+**Onde os bytes moram:** dentro de `ui/servir.py`, em base64. O motivo é medido, não
+estético — `montar.sh` copia para o `.app` uma lista fixa de quatro nomes
+(`index.html`, `estilo.css`, `sala.js`, `servir.py`). Um `favicon.ico` solto em
+`ui/` existiria no repositório e **faltaria no app instalado**, que é justamente o
+defeito que se queria fechar. Regenerar depois de mexer na marca:
+
+```bash
+python3 marca/gerar_icone.py favicon    # reescreve marca/favicon.ico
+```
+
+e reembutir o base64 em `ui/servir.py` (o bloco `FAVICON`, com o procedimento no
+comentário acima dele).
+
+## O ícone no macOS 26 — o que foi medido
+
+Provado com o app instalado numa pasta temporária, perguntando ao **LaunchServices**
+(a mesma API que o Finder e o Dock usam), não ao arquivo:
+
+| tamanho | resultado |
+|---|---|
+| 32 · 64 · 128 · 256 pt | a marca correta, sem moldura — **o Dock está nesta faixa** (`tilesize` 101) |
+| 512 pt | o macOS 26 encaixa o ícone **dentro de um container escuro próprio** |
+
+O container de 512pt não é defeito do desenho: é o tratamento que o Tahoe dá a
+ícone legado (`.icns`). Dois testes sustentam isso:
+
+1. **Full-bleed não resolve.** Gerei o mesmo desenho ocupando 100% do canvas em vez
+   dos 80,9% da grade Big Sur: a moldura continuou em 512pt (`render/prova-tahoe-512.png`).
+2. **Quem não tem o problema já migrou.** O Bear, que sai limpo em todos os tamanhos,
+   traz `AppIcon-26.icns` — ícone no formato do macOS 26.
+
+A correção real é publicar um `.icon` do Icon Composer (Xcode 26), que é uma frente
+própria. Enquanto isso, o ícone está certo onde o app aparece no dia a dia.
+
+Provas: `render/prova-launchservices.png` (meu × Bear × Anybox por tamanho) e
+`render/prova-aba.png` (a aba do Chrome com o favicon).
+
 ## Arquivos
 
 | arquivo | o que é |
@@ -106,6 +169,7 @@ Nenhum PNG é redução de outro: cada tamanho sai do vetor.
 | `icone-pequeno.svg` · `icone-preto-pequeno.svg` | a versão hintada de 16/32 |
 | `icone.icns` · `icone-preto.icns` | montados com `iconutil -c icns`, 10 representações de 16 a 1024 |
 | `marca.png` | a prancha de apresentação (para o README) |
+| `favicon.ico` | 16+32, tema preto — a fonte do bloco `FAVICON` em `ui/servir.py` |
 | `render/` | PNGs por tamanho e as folhas de prova |
 | `gerar_icone.py` · `prancha.py` · `prova_16.py` | regeneram tudo |
 
