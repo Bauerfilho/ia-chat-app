@@ -136,6 +136,15 @@ code,kbd,.num{font-family:var(--mono); font-variant-numeric:tabular-nums}
   background:var(--carvao-800);color:var(--ouro-claro);border-radius:var(--raio);
   text-decoration:none;transition:top var(--t-rapido) var(--ease)}
 .pular:focus{top:var(--u2)}
+.aviso-versao{position:fixed;z-index:60;top:calc(var(--u2) + env(safe-area-inset-top));
+  left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:var(--u);
+  max-width:calc(100vw - 2 * var(--u2));padding:8px 10px 8px var(--u2);
+  border:1px solid var(--ouro);border-radius:999px;background:var(--carvao-800);
+  color:var(--palha-200);box-shadow:var(--sombra-g);font-size:12.5px}
+.aviso-versao[hidden]{display:none}
+.aviso-versao button{border:1px solid var(--ouro-fio);border-radius:999px;padding:4px 10px;
+  cursor:pointer;background:var(--ouro);color:var(--carvao-900);font-weight:600}
+.aviso-versao button:hover{background:var(--ouro-claro)}
 
 /* ── CAMADA 1 · campo de luz ────────────────────────────────────────────── */
 .campo{position:fixed;inset:0;z-index:1;pointer-events:none;overflow:hidden}
@@ -520,6 +529,7 @@ code,kbd,.num{font-family:var(--mono); font-variant-numeric:tabular-nums}
 /* paleta de comandos do dono */
 /* flutua ACIMA da faixa de destino: o menu nunca esconde para quem a mensagem vai */
 .paleta{position:absolute;left:var(--u4);right:var(--u4);bottom:calc(100% + var(--u));
+  z-index:20;
   background:var(--superf-alta);border:1px solid var(--borda-forte);
   border-radius:var(--raio-g);box-shadow:var(--sombra-g);overflow:hidden;
   animation:sobe var(--t-padrao) var(--ease)}
@@ -666,9 +676,8 @@ code,kbd,.num{font-family:var(--mono); font-variant-numeric:tabular-nums}
 html[data-janela="enxame"] .enxame-malha{display:block}
 html[data-janela="enxame"] .papel-pauta{opacity:.18}
 html[data-janela="enxame"] .moldura{
-  grid-template-areas:"trilho cabeca gaveta" "trilho enxame gaveta" "trilho enxame gaveta"}
-html[data-janela="enxame"] .sala,
-html[data-janela="enxame"] .compositor{display:none}
+  grid-template-areas:"trilho cabeca gaveta" "trilho enxame gaveta" "trilho comp gaveta"}
+html[data-janela="enxame"] .sala{display:none}
 .enxame{display:none;grid-area:enxame;position:relative;overflow:auto;
   overscroll-behavior:contain;min-height:0}
 html[data-janela="enxame"] .enxame{display:block}
@@ -1228,7 +1237,7 @@ html[data-enxame-modo="neon"] .enxame-term{background:#03060a}
 
   html[data-janela="enxame"] .moldura{
     grid-template-areas:"trilho trilho trilho" "cabeca cabeca cabeca"
-                        "enxame enxame enxame" "enxame enxame enxame"}
+                        "enxame enxame enxame" "comp comp comp"}
   html[data-janela="groupchat"] .moldura{
     grid-template-areas:"trilho trilho trilho" "cabeca cabeca cabeca"
                         "groupchat groupchat groupchat" "comp comp comp"}

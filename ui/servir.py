@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import gzip
+import hashlib
 import json
 import mimetypes
 import os
@@ -67,6 +68,12 @@ import iachat_core as core  # noqa: E402
 
 UI = Path(__file__).resolve().parent
 CFG = {"escrever": False, "papel": "bauer", "token": ""}
+
+
+def _hash_sala_js() -> str:
+    """Versão da interface que esta instância realmente está servindo."""
+    return hashlib.sha256((UI / "sala.js").read_bytes()).hexdigest()
+
 
 # — os comandos do dono que ATRAVESSAM o servidor ————————————————————————
 #
@@ -619,7 +626,7 @@ class Sala(BaseHTTPRequestHandler):
     def log_message(self, fmt, *a):
         pass
 
-    def _json(self, obj, code=200):
+    def _json(self, obj, code=200, cache_control: str | None = None):
         corpo = json.dumps(obj, ensure_ascii=False).encode()
         # A sala inteira sai por aqui, e é o maior recurso da página: 71 KB de
         # JSON contra 95 KB de JS. Texto de conversa comprime muito — deixá-lo
@@ -631,6 +638,8 @@ class Sala(BaseHTTPRequestHandler):
         if encoding:
             self.send_header("Content-Encoding", encoding)
             self.send_header("Vary", "Accept-Encoding")
+        if cache_control:
+            self.send_header("Cache-Control", cache_control)
         self.send_header("Content-Length", str(len(corpo)))
         self.end_headers()
         self.wfile.write(corpo)
@@ -693,6 +702,14 @@ class Sala(BaseHTTPRequestHandler):
         if not alvo.is_file() or UI not in alvo.parents:
             return self._json({"erro": "não encontrado"}, 404)
         corpo = alvo.read_bytes()
+        if alvo.name == "index.html":
+            marcador = b"__IACHAT_UI_HASH__"
+            if marcador not in corpo:
+                return self._json({"erro": "marcador de versão ausente"}, 500)
+            try:
+                corpo = corpo.replace(marcador, _hash_sala_js().encode())
+            except OSError:
+                return self._json({"erro": "não consegui ler sala.js"}, 500)
         tipo = mimetypes.guess_type(alvo.name)[0] or "application/octet-stream"
         self.send_response(200)
         # o token entra uma vez pela URL e vira cookie — o JS não o carrega em
@@ -713,7 +730,10 @@ class Sala(BaseHTTPRequestHandler):
             self.send_header("Content-Encoding", encoding)
             self.send_header("Vary", "Accept-Encoding")
         self.send_header("Content-Length", str(len(corpo)))
-        self.send_header("Cache-Control", "no-store")
+        cache_control = (
+            "no-cache" if alvo.suffix.lower() in {".html", ".js", ".css"} else "no-store"
+        )
+        self.send_header("Cache-Control", cache_control)
         self.end_headers()
         self.wfile.write(corpo)
 
@@ -736,6 +756,13 @@ class Sala(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(FAVICON)
             return
+        if u.path == "/api/versao":
+            try:
+                return self._json({"hash": _hash_sala_js()}, cache_control="no-store")
+            except OSError:
+                return self._json(
+                    {"erro": "não consegui ler sala.js"}, 500, cache_control="no-store"
+                )
         if u.path == "/api/estado":
             return self._json({"ultima": ultima()})
         if u.path == "/api/sino":

@@ -93,7 +93,8 @@ const E = {
   paleta:$('#paleta'), busca:$('#busca'), avisos:$('#avisos'),
   descer:$('#descer'), descerN:$('#descer-n'), moldura:$('.moldura'),
   veu:$('#veu-gaveta'), sino:$('#btn-sino'), sinoGlifo:$('#sino-glifo'),
-  mapa:$('#mapa'),
+  mapa:$('#mapa'), versao:$('#aviso-versao'), estadoVersao:$('#estado-versao'),
+  recarregarVersao:$('#recarregar-versao'),
 };
 
 const S = {
@@ -166,6 +167,45 @@ const GC = {
 /* ── utilidades ──────────────────────────────────────────────────────────── */
 const TOKEN = new URLSearchParams(location.search).get('t') || '';
 const url = (rota, q='') => rota + (TOKEN||q ? '?' + [q, TOKEN?'t='+encodeURIComponent(TOKEN):''].filter(Boolean).join('&') : '');
+const INTERVALO_VERSAO_MS = 60_000;
+const VERSAO_EMBUTIDA = $('meta[name="ia-chat-versao"]')?.content || '';
+let versaoCarregada = /^[a-f0-9]{64}$/.test(VERSAO_EMBUTIDA) ? VERSAO_EMBUTIDA : null;
+let versaoConsultando = false;
+
+async function verificaVersao(){
+  if (versaoConsultando || !E.versao || !E.versao.hidden) return;
+  versaoConsultando = true;
+  try{
+    const r = await fetch(url('/api/versao'), {cache:'no-store', credentials:'same-origin'});
+    const d = await r.json();
+    if (!r.ok || typeof d.hash !== 'string' || !d.hash)
+      throw new Error(d.erro || ('HTTP ' + r.status));
+    if (versaoCarregada === null) versaoCarregada = d.hash;
+    else if (d.hash !== versaoCarregada){
+      E.versao.hidden = false;
+      if (E.estadoVersao)
+        E.estadoVersao.textContent = 'Nova versão disponível. Use o botão recarregar.';
+    }
+  }catch(e){
+    console.warn('não consegui verificar a versão da interface:', e);
+  }finally{
+    versaoConsultando = false;
+  }
+}
+
+function iniciaVigiaVersao(){
+  if (window.CONGELADO || !E.versao || !E.recarregarVersao) return;
+  E.recarregarVersao.addEventListener('click', ()=> location.reload());
+  verificaVersao();
+  window.setInterval(()=>{
+    if (document.visibilityState === 'visible') verificaVersao();
+  }, INTERVALO_VERSAO_MS);
+  window.addEventListener('focus', verificaVersao);
+  document.addEventListener('visibilitychange', ()=>{
+    if (document.visibilityState === 'visible') verificaVersao();
+  });
+}
+
 const esc = t => String(t).replace(/[&<>"']/g,
   c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const corDe = n => IAS.includes(n) ? n : 'anonima';
@@ -848,6 +888,7 @@ function painelPaleta(html, rotulo){
     `<div class="paleta-topo"><span class="paleta-rotulo">${esc(rotulo)}</span>` +
     `<button type="button" class="paleta-fecha" data-cancelar aria-label="fechar painel">✕</button></div>` + html;
   E.paleta.hidden = false;
+  requestAnimationFrame(()=> E.paleta.scrollIntoView({block:'nearest'}));
   const b = $('[data-copiar]', E.paleta);
   if (b) b.addEventListener('click', ()=> copia(b.dataset.copiar));
   // Confirmação dos comandos que gastam ou matam: o botão carrega o comando,
@@ -1148,6 +1189,14 @@ async function rodaDecidi(c, arg){
 }
 
 function escolhePaleta(cmd){
+  if (cmd === '/quem'){
+    E.texto.value = '';
+    fechaPaleta();
+    E.texto.focus();
+    ajustaAltura(); atualizaDestino();
+    E.conta.textContent = fmtNum.format(0);
+    return rodaQuem();
+  }
   E.texto.value = cmd + ' ';
   fechaPaleta();
   E.texto.focus();
@@ -1633,6 +1682,7 @@ if (window.CONGELADO){                       // export offline: a sala vem dentr
   requestAnimationFrame(()=> desce(false));
 } else {
   carrega();
+  iniciaVigiaVersao();
   // O CLI e o app controlam o MESMO campo. Enquanto a janela está visível,
   // cinco segundos é o teto para o app refletir uma troca feita no terminal.
   window.setInterval(()=>{
