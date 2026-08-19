@@ -859,6 +859,15 @@ function painelPaleta(html, rotulo){
     bt.addEventListener('click', ()=> { fechaPaleta(); E.texto.focus(); }));
 }
 
+/* Painel de resultado fecha ao clicar FORA — pergunta do dono ("fica pra cima o
+   tempo todo?"). Esc e ✕ continuam; clicar dentro (copiar, confirmar) não fecha.
+   Só vale no modo 'painel': o combobox de "/" já fecha pelos próprios caminhos. */
+document.addEventListener('pointerdown', ev => {
+  if (paletaModo !== 'painel' || E.paleta.hidden) return;
+  if (E.paleta.contains(ev.target) || document.getElementById('compositor')?.contains(ev.target)) return;
+  fechaPaleta();
+});
+
 async function copia(txt){
   try{
     await navigator.clipboard.writeText(txt);
