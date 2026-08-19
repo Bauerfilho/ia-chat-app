@@ -108,7 +108,10 @@ const S = {
    `index.html` continua sendo a casa única. O terceiro modo entra como um
    filho da mesma `.moldura`, usa o mesmo cabeçalho e o mesmo compositor; não
    nasce uma página paralela. O seletor é montado aqui porque a fronteira desta
-   fase não inclui o HTML, e fica visível também no celular. */
+   fase não inclui o HTML, e fica visível também no celular. A janela das IAs
+   saiu do groupchat: virou a aba "IAs" da gaveta, e o miolo (nota, fonte,
+   aviso de corte e cartões) é plantado lá por esta mesma função — a captura
+   do `GC` logo abaixo continua na ordem de sempre. */
 const JANELAS = new Set(['sala','enxame','groupchat']);
 
 function instalaModosJanela(){
@@ -132,15 +135,15 @@ function instalaModosJanela(){
     <main class="groupchat-conversa" id="groupchat-conversa" aria-label="Conversa entre as IAs">
       <div class="groupchat-fio" id="groupchat-fio" role="log" aria-live="polite"
            aria-relevant="additions"></div>
-    </main>
-    <aside class="groupchat-lateral" aria-label="Estado das sessões">
-      <h2>Janelas das IAs</h2>
-      <p>Ocupação da sessão atual. Nunca soma a sala.</p>
-      <p class="gc-fonte" id="groupchat-fonte">telemetria: aguardando</p>
-      <p class="gc-fonte" id="groupchat-corte" role="status" aria-live="polite" hidden></p>
-      <div id="groupchat-sessoes"></div>
-    </aside>`;
+    </main>`;
   E.moldura.append(groupchat);
+
+  const pnlIas = $('#pnl-ias');
+  if (pnlIas) pnlIas.insertAdjacentHTML('beforeend', `
+    <p class="painel-nota">Ocupação da sessão atual. Nunca soma a sala.</p>
+    <p class="gc-fonte" id="groupchat-fonte">telemetria: aguardando</p>
+    <p class="gc-fonte" id="groupchat-corte" role="status" aria-live="polite" hidden></p>
+    <div class="pnl-ias-trilho" id="groupchat-sessoes"></div>`);
 
   modos.addEventListener('click', ev=>{
     const b = ev.target.closest('[data-modo-janela]');
@@ -640,6 +643,25 @@ async function gcTick(){
   } finally {
     gcRender(); GC.ocupado = false;
   }
+}
+
+/* O poll da telemetria mora onde os cartões moram. Com a aba IAs na gaveta,
+   ele não pode mais morrer fora do modo groupchat: arma ⟺ modo groupchat OU
+   (aba IAs ativa com a gaveta aberta), e desarma no resto. Quem muda qualquer
+   uma das três condições chama isto — janelaModo, abreAba e abreGaveta — e a
+   transição para armado já pinta na hora, sem esperar o primeiro intervalo. */
+function gcSincronizaPoll(){
+  const ativo = () =>
+    document.documentElement.dataset.janela === 'groupchat' ||
+    (E.moldura.dataset.gaveta === 'aberta' &&
+     $('#aba-ias')?.getAttribute('aria-selected') === 'true');
+  if (ativo() && !GC.timer){
+    gcTick();
+    GC.timer = setInterval(()=>{
+      if (ativo() && document.visibilityState === 'visible') gcTick();
+    }, 2000);
+  }
+  if (!ativo() && GC.timer){ clearInterval(GC.timer); GC.timer = null; }
 }
 
 function desenhaPresenca(){
@@ -1515,7 +1537,8 @@ E.sala.addEventListener('scroll', ()=>{
 E.descer.addEventListener('click', ()=> desce());
 
 /* Roving tabindex: o conjunto de abas é UMA parada de Tab, e as setas andam
-   entre elas — é o que o padrão ARIA de tablist exige. Antes eram quatro. */
+   entre elas — é o que o padrão ARIA de tablist exige. Antes eram quatro;
+   entraram Mapa e IAs. */
 /* ── o mapa de retomada ────────────────────────────────────────────────────
    Busca SÓ quando a aba abre, e não a cada tick: o `caminho.md` muda em
    compactação, não em mensagem. Puxá-lo no ciclo da sala seria pagar leitura de
@@ -1570,6 +1593,7 @@ function abreAba(qual){
     $('#pnl-' + a.dataset.pnl).hidden = !ativo;
   });
   if (qual === 'mapa') desenhaMapa(true);
+  gcSincronizaPoll();
 }
 $$('.aba').forEach(a=>{
   a.addEventListener('click', ()=> abreAba(a.dataset.pnl));
@@ -1610,6 +1634,7 @@ function abreGaveta(forcar){
   E.moldura.dataset.gaveta = aberta ? 'aberta' : 'fechada';
   botoesGaveta().forEach(b => b.setAttribute('aria-expanded', String(aberta)));
   if (aberta && estreito()) $('#gaveta-fecha').focus();
+  gcSincronizaPoll();
 }
 botoesGaveta().forEach(b => b.addEventListener('click', ()=>{ abriuAGaveta = b; abreGaveta(); }));
 $('#gaveta-fecha').addEventListener('click', ()=>{ abreGaveta(false); voltaOFoco(); });
@@ -1897,19 +1922,13 @@ function janelaModo(pedido){
   } else if (modo === 'groupchat'){
     if (tit) tit.textContent = 'groupchat';
     gcTick();
-    if (!GC.timer) GC.timer = setInterval(()=>{
-      if (document.documentElement.dataset.janela === 'groupchat' &&
-          document.visibilityState === 'visible') gcTick();
-    }, 2000);
   } else {
     if (tit && tit.dataset.sala) tit.innerHTML = tit.dataset.sala;
   }
   if (anterior === 'enxame' && modo !== 'enxame' && EX.timer){
     clearInterval(EX.timer); EX.timer = null;
   }
-  if (anterior === 'groupchat' && modo !== 'groupchat' && GC.timer){
-    clearInterval(GC.timer); GC.timer = null;
-  }
+  gcSincronizaPoll();
   if (modo !== 'enxame' && matchMedia('(pointer:fine)').matches) E.texto.focus();
   atualizaDestino();
   return modo;

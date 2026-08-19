@@ -617,7 +617,7 @@ def main() -> int:
     checa("o painel é opaco e participa do fluxo",
           "position:static" in painel_css and
           "background:var(--superf-alta)" in painel_css)
-    fio_css = trecho(".groupchat-fio", ".groupchat-lateral", CSS)
+    fio_css = trecho(".groupchat-fio", ".gc-fala", CSS)
     checa("o fio usa a coluna canônica de 74ch centralizada",
           "--leitura:74ch" in CSS and "width:100%" in fio_css and
           "max-width:var(--leitura)" in fio_css and "margin-inline:auto" in fio_css)

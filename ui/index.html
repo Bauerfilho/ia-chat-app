@@ -205,6 +205,7 @@
       <button class="aba" role="tab" id="aba-dia"      aria-controls="pnl-dia"      aria-selected="false" tabindex="-1" data-pnl="dia">Dia</button>
       <button class="aba" role="tab" id="aba-arquivos" aria-controls="pnl-arquivos" aria-selected="false" tabindex="-1" data-pnl="arquivos">Arquivos</button>
       <button class="aba" role="tab" id="aba-mapa"     aria-controls="pnl-mapa"     aria-selected="false" tabindex="-1" data-pnl="mapa">Mapa</button>
+      <button class="aba" role="tab" id="aba-ias"      aria-controls="pnl-ias"      aria-selected="false" tabindex="-1" data-pnl="ias">IAs</button>
     </div>
 
     <section class="painel" role="tabpanel" id="pnl-fio" aria-labelledby="aba-fio" tabindex="0">
@@ -247,6 +248,14 @@
         compactada, para ela se situar sem reler a conversa. Diz <b>para onde ir</b>, não o que
         houve.</p>
       <div class="mapa" id="mapa"></div>
+    </section>
+
+    <!-- A janela das IAs era um aside do groupchat; virou a sexta aba, viva nos
+         três modos. O miolo (nota, fonte, aviso de corte e os cartões de
+         sessão) é montado pelo `instalaModosJanela` do sala.js, na ordem em
+         que o `GC` sempre capturou as referências. -->
+    <section class="painel" role="tabpanel" id="pnl-ias" aria-labelledby="aba-ias" tabindex="0" hidden>
+      <h2 class="painel-titulo">Janelas das IAs</h2>
     </section>
   </aside>
 
