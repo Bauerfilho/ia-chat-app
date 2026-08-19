@@ -849,9 +849,31 @@ let paletaIdx = 0;
    do `/quem` ou a linha do terminal. No painel não há opção para navegar, e as
    setas não podem fingir que há. */
 let paletaModo = 'lista';
+/* O modo diz COMO a superfície se comporta; a identidade diz O QUE ela mostra.
+   São estados diferentes: ao digitar `/`, a lista substitui o DOM do painel,
+   mas precisa lembrar que veio de `/quem` até o comando ser escolhido. */
+let paletaPainelId = null;
+let paletaPainelCapturado = null;
+let paletaQuemGeracao = 0;
+let paletaQuemAbortador = null;
+function invalidaConsultaQuem(){
+  paletaQuemGeracao += 1;
+  if (paletaQuemAbortador){
+    paletaQuemAbortador.abort();
+    paletaQuemAbortador = null;
+  }
+}
 function abrePaleta(prefixo){
   const itens = COMANDOS.filter(c => c.cmd.startsWith(prefixo));
   if (!itens.length) return fechaPaleta();
+  // A identidade é capturada ANTES de a lista substituir o DOM do painel.
+  // Chamadas seguintes enquanto a pessoa completa `/quem` preservam a captura.
+  if (paletaModo === 'painel' && !E.paleta.hidden){
+    paletaPainelCapturado = paletaPainelId;
+    paletaPainelId = null;
+    E.paleta.removeAttribute('data-painel');
+    invalidaConsultaQuem();
+  }
   paletaIdx = 0;
   paletaModo = 'lista';
   E.paleta.setAttribute('role', 'listbox');
@@ -874,6 +896,10 @@ function abrePaleta(prefixo){
   marcaPaleta();
 }
 function fechaPaleta(){
+  invalidaConsultaQuem();
+  paletaPainelId = null;
+  paletaPainelCapturado = null;
+  E.paleta.removeAttribute('data-painel');
   E.paleta.hidden = true;
   E.paleta.classList.remove('paleta--painel');
   paletaModo = 'lista';
@@ -896,9 +922,11 @@ function marcaPaleta(){
    agentes trabalham nesta pasta e `estilo.css` não é minha fronteira — por isso
    nenhuma classe nova: só `.paleta-item`, `.paleta-cmd`, `.paleta-desc` e
    `.paleta-quem`, que já existem. */
-function painelPaleta(html, rotulo){
+function painelPaleta(html, rotulo, identidade = null){
   fechaPaleta();                       // limpa o combobox: aqui não há opção
   paletaModo = 'painel';
+  paletaPainelId = identidade;
+  if (identidade) E.paleta.setAttribute('data-painel', identidade);
   E.paleta.setAttribute('role', 'group');
   E.paleta.setAttribute('aria-label', rotulo);
   // Painel de RESULTADO não flutua: o combobox de "/" pode flutuar porque tem
@@ -944,7 +972,7 @@ async function copia(txt){
 }
 
 /* O que NÃO atravessa não fica mudo: mostra a linha e o porquê. */
-function mostraLinha(c){
+function mostraLinha(c, identidade = null){
   painelPaleta(`
     <div class="paleta-item">
       <span class="paleta-cmd" translate="no">${c.cmd}</span>
@@ -954,26 +982,43 @@ function mostraLinha(c){
     <div class="paleta-item">
       <code class="paleta-desc" translate="no">${esc(c.linha)}</code>
       <button type="button" class="paleta-cmd" data-copiar="${esc(c.linha)}">copiar</button>
-    </div>`, `${c.cmd}: a linha para o terminal`);
+    </div>`, `${c.cmd}: a linha para o terminal`, identidade);
 }
 
 /* `/quem` atravessa porque só LÊ. Os demais comandos do dono também
    atravessam (decisão dele, fase 9) — mas com allowlist fechada, `--de` do
    servidor e confirmação explícita; quem os chama é `rodaComando`, abaixo. */
 async function rodaQuem(){
+  /* F3_TOGGLE_QUEM_INICIO */
+  if (paletaPainelId === '/quem' || paletaPainelCapturado === '/quem'){
+    fechaPaleta();
+    E.texto.focus();
+    return;
+  }
+  /* F3_TOGGLE_QUEM_FIM */
   painelPaleta('<div class="paleta-item"><span class="paleta-desc">consultando…</span></div>',
-               '/quem: consultando');
+               '/quem: consultando', '/quem');
+  const geracao = ++paletaQuemGeracao;
+  const abortador = new AbortController();
+  paletaQuemAbortador = abortador;
+  const aindaAtual = ()=>
+    paletaQuemGeracao === geracao && paletaQuemAbortador === abortador &&
+    paletaPainelId === '/quem' && !E.paleta.hidden;
   let d;
   try{
-    const r = await fetch(url('/api/quem'));
+    const r = await fetch(url('/api/quem'), {signal: abortador.signal});
     d = await r.json();
     if (!r.ok || d.erro) throw new Error(d.erro || ('HTTP ' + r.status));
   }catch(e){
+    if (!aindaAtual()) return;
+    paletaQuemAbortador = null;
     // Degrada como o cabeçalho deste arquivo promete: servidor sem a rota (o
     // do bundle é reserva e não tem) vira a linha do terminal, não um erro sem saída.
     return mostraLinha({cmd:'/quem', linha:'iachat-comando quem',
-      porque:'este servidor não respondeu (' + e.message + '), mas o CLI responde.'});
+      porque:'este servidor não respondeu (' + e.message + '), mas o CLI responde.'}, '/quem');
   }
+  if (!aindaAtual()) return;
+  paletaQuemAbortador = null;
   const linhas = (d.quem || []).map(x=>`
     <div class="paleta-item">
       <span class="paleta-cmd" translate="no">${esc(x.ia)}</span>
@@ -985,7 +1030,7 @@ async function rodaQuem(){
       <span class="paleta-cmd" translate="no">${esc(d.missao || '—')}</span>
       <span class="paleta-desc">${esc(d.estado || 'nenhuma missão aberta')}</span>
       <span class="paleta-quem">agora</span>
-    </div>${linhas}`, '/quem: quem está vivo');
+    </div>${linhas}`, '/quem: quem está vivo', '/quem');
 }
 
 /* ── os comandos do dono, DE VERDADE, pelo servidor ──────────────────────
@@ -1213,7 +1258,6 @@ async function rodaDecidi(c, arg){
 function escolhePaleta(cmd){
   if (cmd === '/quem'){
     E.texto.value = '';
-    fechaPaleta();
     E.texto.focus();
     ajustaAltura(); atualizaDestino();
     E.conta.textContent = fmtNum.format(0);
