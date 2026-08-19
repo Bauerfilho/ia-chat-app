@@ -1851,7 +1851,8 @@ const EX = {
   remoto: $('#enxame-remoto'), placar: $('#enxame-placar'), fonte: $('#enxame-fonte'),
   log: $('#enxame-log'), filtro:'todos', swarm:null, remotoAlvo:null, remotoAcao:null,
   anterior: new Map(), primeira:true, ocupado:false, vivo:false, rotulo:'—',
-  runs:[], timer:null,
+  runs:[], dados:[], timer:null,
+  sig:{reatores:null,doca:null,placar:null,fonte:null,erro:null},
 };
 const EX_DOBRA_CHAVE = 'iaswarm.dourado.recolhidos';
 let EX_DOBRADOS = new Set();
@@ -1936,6 +1937,56 @@ function exPassa(w){
   if (EX.filtro === 'todos') return true;
   if (EX.filtro === 'vivos') return !EX_TERMINAL.has(w.estado);
   return w.estado === EX.filtro;
+}
+function exModeloReator(w, run){
+  const v = w._v || {};
+  return [
+    w.id,w.braco,w.origemBraco,w.variante,w.casca,w.marca,w.etapas,w.feitas,
+    w.estado,w.nota,w.ts,w.tsIni,w.tsDesp,w.eventos,w.passo,w.cor,w.noTsv,
+    (run.resultados||[]).includes(w.id),
+    [v.classe||'',v.rotulo||'',!!v.vivo,v.parado??null,!!v.alerta],
+    w.passos.map(p=>[p.etapa??null,p.estado||'',p.nota||'',p.ts||'']),
+  ];
+}
+function exSigReatores(runs){
+  const modelo = runs.map(run=>[
+    run.id,run.missao||'',EX_DOBRADOS.has(run.id),EX.swarm===run.id,
+    [run._m.ok,run._m.viv,run._m.fal,run._m.sil,run._m.n,run._m.agora,run._m.filete],
+    run.ondas.map(o=>{
+      const workers = o.workers.filter(exPassa);
+      return workers.length
+        ? [o.n,o.ts||'',o.workers.length,workers.map(w=>exModeloReator(w,run))]
+        : null;
+    }).filter(Boolean),
+  ]);
+  return JSON.stringify([EX.filtro,EX.swarm,[...EX_DOBRADOS].sort(),modelo]);
+}
+function exSigDoca(runs){
+  const run = runs.find(r=>r.id===EX.swarm);
+  if (!run) return JSON.stringify([null]);
+  const ordem = run.workers.map(w=>w.id);
+  const workers = [...run.workers].sort((a,b)=>a.id.localeCompare(b.id,'pt')).map(w=>{
+    const v = w._v || {};
+    return [
+      w.id,w.marca,w.braco,w.cor,w.estado,w.nota,w.feitas,w.etapas,w.eventos,
+      w.tsIni,w.ts,w.passo,w.resultadoBytes??null,w.logBytes??null,
+      [v.rotulo||'',!!v.alerta],(run.resultados||[]).includes(w.id),
+    ];
+  });
+  return JSON.stringify([
+    EX.swarm,EX.rotulo,run.id,run.missao||'',run.caminho||'',
+    (run.resultados||[]).slice().sort(),ordem,workers,
+    [run._m.ok,run._m.viv,run._m.fal,run._m.sil,run._m.n,run._m.filete],
+    run.ondas.map(o=>[o.n,o.ts||'',o.workers.map(w=>w.id)]),
+  ]);
+}
+function exAtualizaDobrar(){
+  const bd = $('#ex-dobrar');
+  const tudo = EX.runs.length && EX.runs.every(id=>EX_DOBRADOS.has(id));
+  if (bd){
+    bd.setAttribute('aria-pressed', String(!!tudo));
+    bd.textContent = tudo ? 'expandir todos' : 'recolher todos';
+  }
 }
 function exLinhaWorker(w, runId){
   const chave = runId+'/'+w.id, prev = EX.anterior.get(chave);
@@ -2052,9 +2103,8 @@ function exRenderDoca(runs){
       dados desta doca: <b>${esc(EX.rotulo)}</b>${temBytes?' · tamanhos medidos no disco':' · tamanhos indisponíveis nesta fonte'}</p>`;
   doca.scrollTop = rolagem;
 }
-/* O painel redesenha o DOM a cada 2 s. Sem este envelope o browser grampa o
-   scroll no que sobrou e o foco de teclado morre — quem navega na janela do
-   enxame perde o botão a cada tick. Trava a altura, devolve scroll E foco. */
+/* Quando o modelo visual muda, este envelope impede que a troca necessária
+   mate o scroll ou o foco de teclado. Tick sem mudança não entra aqui. */
 function exTrocando(alvo, fn){
   const palco = alvo && alvo.parentElement;
   const y = palco ? palco.scrollTop : 0;
@@ -2075,6 +2125,16 @@ function exTrocando(alvo, fn){
     if (volta && typeof volta.focus === 'function') volta.focus({preventScroll:true});
   }
   requestAnimationFrame(()=>{ if (alvo) alvo.style.minHeight = ''; });
+}
+function exExpiraClasse(alvo, classe, espera){
+  if (!alvo || !alvo.classList.contains(classe)) return;
+  const tira = ()=>{
+    alvo.removeEventListener('animationend', animou);
+    if (alvo.classList.contains(classe)) alvo.classList.remove(classe);
+  };
+  const animou = ev=>{ if (ev.target===alvo || alvo.contains(ev.target)) tira(); };
+  alvo.addEventListener('animationend', animou);
+  setTimeout(tira, espera);
 }
 function exDetectar(runs){
   const novo = new Map(); const eventos = [];
@@ -2099,6 +2159,7 @@ function exRender(runs){
   EX.runs = runs.map(r=>r.id);
   if (EX.swarm && !EX.runs.includes(EX.swarm)) EX.swarm = null;
   if (EX.swarm) runs = [...runs].sort((a,b)=>(b.id===EX.swarm)-(a.id===EX.swarm));
+  EX.dados = runs;
   for (const run of runs){
     const agora = Math.max(0, ...run.workers.map(w=>exSeg(w.ts)??0)) || null;
     let rOk=0, rViv=0, rFal=0, rSil=0;
@@ -2141,21 +2202,42 @@ function exRender(runs){
       <div class="enxame-corpo">${ondas||'<p class="enxame-vazio">nenhum worker neste filtro.</p>'}</div>
     </article>`);
   }
-  if (EX.raiz) EX.raiz.classList.toggle('estreia', EX.primeira);
-  exTrocando(EX.reatores, ()=>{
-    EX.reatores.innerHTML = html.join('') || '<p class="enxame-vazio">nenhum swarm encontrado em ~/.claude/iaswarm-runs.</p>';
+  const sigReatores = exSigReatores(runs);
+  if (EX.sig.reatores !== sigReatores){
+    const estreia = EX.primeira;
+    if (EX.raiz && estreia) EX.raiz.classList.toggle('estreia', true);
+    exTrocando(EX.reatores, ()=>{
+      EX.reatores.innerHTML = html.join('') || '<p class="enxame-vazio">nenhum swarm encontrado em ~/.claude/iaswarm-runs.</p>';
+    });
+    EX.sig.reatores = sigReatores;
+    exAtualizaDobrar();
+    if (EX.raiz && estreia) exExpiraClasse(EX.raiz, 'estreia', 700);
+    $$('.enxame-w.avancou', EX.reatores).forEach(w=>exExpiraClasse(w, 'avancou', 700));
+  }
+  const sigDoca = exSigDoca(runs);
+  if (EX.sig.doca !== sigDoca){
     exRenderDoca(runs);
-  });
-  EX.placar.innerHTML = [
+    EX.sig.doca = sigDoca;
+  }
+  const placar = [
     ['swarms',runs.length,''],['workers',tot,''],
     ['em curso',vivos,'viv'],['entregues',ok,'ok'],
     ['silêncio',sil,'sil'],['falhas',fal,'fal']
-  ].map(([r,v,c])=>`<div class="enxame-tile ${c}"><dt>${r}</dt><dd>${v}</dd></div>`).join('');
-  EX.fonte.className = 'enxame-fonte'+(EX.vivo?' vivo':'');
-  EX.fonte.innerHTML = `<span class="enxame-led" aria-hidden="true"></span>fonte <b translate="no">${esc(EX.rotulo)}</b>`;
-  const bd = $('#ex-dobrar'), tudo = runs.length && runs.every(r=>EX_DOBRADOS.has(r.id));
-  if (bd){ bd.setAttribute('aria-pressed', String(!!tudo)); bd.textContent = tudo ? 'expandir todos' : 'recolher todos'; }
+  ];
+  const sigPlacar = JSON.stringify(placar.map(([,v])=>v));
+  if (EX.sig.placar !== sigPlacar){
+    EX.placar.innerHTML = placar
+      .map(([r,v,c])=>`<div class="enxame-tile ${c}"><dt>${r}</dt><dd>${v}</dd></div>`).join('');
+    EX.sig.placar = sigPlacar;
+  }
+  const sigFonte = JSON.stringify([EX.vivo,EX.rotulo]);
+  if (EX.sig.fonte !== sigFonte){
+    EX.fonte.className = 'enxame-fonte'+(EX.vivo?' vivo':'');
+    EX.fonte.innerHTML = `<span class="enxame-led" aria-hidden="true"></span>fonte <b translate="no">${esc(EX.rotulo)}</b>`;
+    EX.sig.fonte = sigFonte;
+  }
   exDetectar(runs);
+  EX.sig.erro = null;
   EX.primeira = false;
 }
 async function exTick(){
@@ -2163,8 +2245,15 @@ async function exTick(){
   EX.ocupado = true;
   try { exRender(await exCarregar()); }
   catch(e){
-    EX.reatores.innerHTML = `<p class="enxame-vazio">sem dados: ${esc(e.message||e)}. A leitura é /api/iaswarm — se a rota não existir, o servidor é o velho.</p>`;
-    EX.fonte.innerHTML = `<span class="enxame-led" aria-hidden="true"></span>fonte <b>falhou</b>`;
+    const mensagem = String(e.message||e);
+    const sigErro = JSON.stringify(['falhou',mensagem]);
+    if (EX.sig.erro !== sigErro){
+      EX.reatores.innerHTML = `<p class="enxame-vazio">sem dados: ${esc(mensagem)}. A leitura é /api/iaswarm — se a rota não existir, o servidor é o velho.</p>`;
+      EX.fonte.innerHTML = `<span class="enxame-led" aria-hidden="true"></span>fonte <b>falhou</b>`;
+      EX.sig.erro = sigErro;
+      EX.sig.reatores = null;
+      EX.sig.fonte = null;
+    }
   }
   finally { EX.ocupado = false; }
 }
@@ -2339,6 +2428,8 @@ if (EX.raiz){
       const card = dob.closest('.enxame-reator');
       if (card){ card.classList.toggle('recolhido', EX_DOBRADOS.has(id));
         dob.setAttribute('aria-expanded', String(!EX_DOBRADOS.has(id))); }
+      exAtualizaDobrar();
+      EX.sig.reatores = exSigReatores(EX.dados);
       return;
     }
     const abre = ev.target.closest('[data-abre]');

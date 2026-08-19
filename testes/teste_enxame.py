@@ -8,15 +8,20 @@ pasta, `../` não atravessa.
 """
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import os
 import re
+import shutil
 import socket
+import struct
 import subprocess
 import sys
 import tempfile
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -26,6 +31,128 @@ HTML = (UI / "index.html").read_text(encoding="utf-8")
 JS = (UI / "sala.js").read_text(encoding="utf-8")
 CSS = (UI / "estilo.css").read_text(encoding="utf-8")
 SERVIR = UI / "servir.py"
+
+
+def acha_chrome() -> Path:
+    """Prefere o headless de testes; cai no Chrome do operador sem instalar nada."""
+    indicado = os.environ.get("IACHAT_TEST_CHROME", "").strip()
+    if indicado:
+        return Path(indicado)
+    cache = Path.home() / "Library" / "Caches" / "ms-playwright"
+    headless = sorted(
+        cache.glob("chromium_headless_shell-*/chrome-headless-shell-mac-*/chrome-headless-shell"),
+        reverse=True,
+    )
+    for candidato in headless:
+        if candidato.is_file():
+            return candidato
+    return Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+
+
+CHROME = acha_chrome()
+
+
+class CdpWebSocket:
+    """Cliente WebSocket mínimo para o CDP local, sem dependência externa."""
+
+    def __init__(self, url: str, timeout: float, origin: str) -> None:
+        alvo = urllib.parse.urlsplit(url)
+        if alvo.scheme != "ws" or not alvo.hostname or not alvo.port:
+            raise RuntimeError(f"WebSocket CDP inválido: {url}")
+        self.sock = socket.create_connection((alvo.hostname, alvo.port), timeout=timeout)
+        self.leitor = self.sock.makefile("rb")
+        chave = base64.b64encode(os.urandom(16)).decode("ascii")
+        caminho = alvo.path or "/"
+        if alvo.query:
+            caminho += "?" + alvo.query
+        pedido = (
+            f"GET {caminho} HTTP/1.1\r\n"
+            f"Host: {alvo.hostname}:{alvo.port}\r\n"
+            "Upgrade: websocket\r\n"
+            "Connection: Upgrade\r\n"
+            f"Sec-WebSocket-Key: {chave}\r\n"
+            "Sec-WebSocket-Version: 13\r\n"
+            f"Origin: {origin}\r\n\r\n"
+        )
+        self.sock.sendall(pedido.encode("ascii"))
+        status = self.leitor.readline().decode("ascii", "replace").strip()
+        cabecalhos = {}
+        while True:
+            linha = self.leitor.readline()
+            if linha in (b"", b"\r\n"):
+                break
+            nome, valor = linha.decode("ascii", "replace").split(":", 1)
+            cabecalhos[nome.lower()] = valor.strip()
+        esperado = base64.b64encode(hashlib.sha1(
+            (chave + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode("ascii")
+        ).digest()).decode("ascii")
+        if " 101 " not in f" {status} " or cabecalhos.get("sec-websocket-accept") != esperado:
+            self.close()
+            raise RuntimeError(f"handshake WebSocket CDP falhou: {status}")
+
+    def _le(self, tamanho: int) -> bytes:
+        dados = self.leitor.read(tamanho)
+        if dados is None or len(dados) != tamanho:
+            raise RuntimeError("WebSocket CDP fechou no meio de um frame")
+        return dados
+
+    def _envia_frame(self, opcode: int, carga: bytes = b"") -> None:
+        cabecalho = bytearray([0x80 | opcode])
+        tamanho = len(carga)
+        if tamanho < 126:
+            cabecalho.append(0x80 | tamanho)
+        elif tamanho <= 0xFFFF:
+            cabecalho.extend((0x80 | 126, *struct.pack("!H", tamanho)))
+        else:
+            cabecalho.extend((0x80 | 127, *struct.pack("!Q", tamanho)))
+        mascara = os.urandom(4)
+        mascarada = bytes(b ^ mascara[i % 4] for i, b in enumerate(carga))
+        self.sock.sendall(bytes(cabecalho) + mascara + mascarada)
+
+    def send(self, texto: str) -> None:
+        self._envia_frame(0x1, texto.encode("utf-8"))
+
+    def recv(self) -> str:
+        partes = []
+        while True:
+            primeiro, segundo = self._le(2)
+            final = bool(primeiro & 0x80)
+            opcode = primeiro & 0x0F
+            mascarado = bool(segundo & 0x80)
+            tamanho = segundo & 0x7F
+            if tamanho == 126:
+                tamanho = struct.unpack("!H", self._le(2))[0]
+            elif tamanho == 127:
+                tamanho = struct.unpack("!Q", self._le(8))[0]
+            mascara = self._le(4) if mascarado else b""
+            carga = self._le(tamanho)
+            if mascarado:
+                carga = bytes(b ^ mascara[i % 4] for i, b in enumerate(carga))
+            if opcode == 0x8:
+                raise RuntimeError("WebSocket CDP encerrou a conexão")
+            if opcode == 0x9:
+                self._envia_frame(0xA, carga)
+                continue
+            if opcode == 0x1:
+                partes = [carga]
+            elif opcode == 0x0:
+                partes.append(carga)
+            else:
+                continue
+            if final:
+                return b"".join(partes).decode("utf-8")
+
+    def close(self) -> None:
+        try:
+            if hasattr(self, "sock"):
+                self._envia_frame(0x8)
+        except OSError:
+            pass
+        if hasattr(self, "leitor"):
+            self.leitor.close()
+        if hasattr(self, "sock"):
+            self.sock.close()
+
 
 _ok = 0
 _falhou = 0
@@ -84,6 +211,434 @@ def pede(porta: int, rota: str, token: str | None = None) -> tuple[int, str]:
         return 0, str(e)
 
 
+def espera_http(porta: int, caminho: str, prazo: float = 10.0) -> None:
+    """Espera a ponta temporária responder; ausência é BLOCK, nunca verde."""
+    limite = time.time() + prazo
+    ultimo = "sem resposta"
+    while time.time() < limite:
+        try:
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{porta}{caminho}", timeout=1
+            ) as resposta:
+                if resposta.status == 200:
+                    return
+        except Exception as exc:
+            ultimo = str(exc)
+        time.sleep(0.1)
+    raise RuntimeError(f"HTTP não ficou pronto: {ultimo}")
+
+
+def cdp_chama(ws, contador: list[int], metodo: str,
+              parametros: dict | None = None) -> dict:
+    """Faz uma chamada mínima ao Chrome DevTools Protocol."""
+    contador[0] += 1
+    ident = contador[0]
+    ws.send(json.dumps({"id": ident, "method": metodo,
+                        "params": parametros or {}}, ensure_ascii=False))
+    while True:
+        resposta = json.loads(ws.recv())
+        if resposta.get("id") != ident:
+            continue
+        if "error" in resposta:
+            raise RuntimeError(f"CDP {metodo}: {resposta['error']}")
+        return resposta.get("result") or {}
+
+
+def cdp_avalia(ws, contador: list[int], expressao: str) -> object:
+    """Executa JavaScript real na página e devolve somente valor serializável."""
+    resposta = cdp_chama(ws, contador, "Runtime.evaluate", {
+        "expression": expressao,
+        "awaitPromise": True,
+        "returnByValue": True,
+    })
+    if resposta.get("exceptionDetails"):
+        detalhe = resposta["exceptionDetails"].get("text") or "exceção JavaScript"
+        raise RuntimeError(detalhe)
+    remoto = resposta.get("result") or {}
+    if remoto.get("subtype") == "error":
+        raise RuntimeError(remoto.get("description") or "erro JavaScript")
+    return remoto.get("value")
+
+
+def estabilidade_enxame_browser(porta: int, token: str, run: Path) -> dict:
+    """Prova o gate F1 no DOM vivo, inclusive 30 s de polling imóvel."""
+    if not CHROME.is_file():
+        return {"block": f"Chrome ausente em {CHROME}"}
+
+    depuracao = porta_livre(60000)
+    perfil = Path(tempfile.mkdtemp(prefix="ui-enxame-chrome-"))
+    chrome = None
+    ws = None
+    medidas: dict = {}
+    try:
+        chrome = subprocess.Popen([
+            str(CHROME), "--headless=new", "--disable-gpu", "--no-sandbox",
+            "--single-process", "--no-zygote",
+            "--disable-breakpad", "--disable-crash-reporter",
+            "--no-first-run", "--no-default-browser-check",
+            f"--remote-debugging-port={depuracao}",
+            f"--remote-allow-origins=http://127.0.0.1:{depuracao}",
+            f"--user-data-dir={perfil}", "about:blank",
+        ], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        try:
+            espera_http(depuracao, "/json/version")
+        except Exception as exc:
+            if chrome.poll() is None:
+                chrome.terminate()
+            try:
+                saida_chrome = chrome.communicate(timeout=3)[0]
+            except subprocess.TimeoutExpired:
+                chrome.kill()
+                saida_chrome = chrome.communicate(timeout=3)[0]
+            raise RuntimeError(
+                f"{exc}; Chrome rc={chrome.returncode}: {saida_chrome[-900:]}"
+            ) from exc
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{depuracao}/json/list", timeout=5
+        ) as resposta:
+            alvos = json.loads(resposta.read())
+        pagina = next(x for x in alvos if x.get("type") == "page")
+        ws = CdpWebSocket(
+            pagina["webSocketDebuggerUrl"], timeout=45,
+            origin=f"http://127.0.0.1:{depuracao}",
+        )
+        contador = [0]
+        cdp_chama(ws, contador, "Runtime.enable")
+        cdp_chama(ws, contador, "Page.enable")
+
+        # Conta setters por alvo desde antes do primeiro JavaScript da página.
+        cdp_chama(ws, contador, "Page.addScriptToEvaluateOnNewDocument", {
+            "source": r"""
+(() => {
+  const mapa = {
+    'enxame-reatores':'reatores', 'enxame-doca':'doca',
+    'enxame-placar':'placar', 'enxame-fonte':'fonte',
+    'enxame-remoto':'remoto'
+  };
+  window.__f1Writes = {reatores:0,doca:0,placar:0,fonte:0,remoto:0};
+  const real = Object.getOwnPropertyDescriptor(Element.prototype, 'innerHTML');
+  Object.defineProperty(Element.prototype, 'innerHTML', {
+    configurable:true, enumerable:real.enumerable, get:real.get,
+    set(valor){
+      const alvo = mapa[this.id];
+      if (alvo) window.__f1Writes[alvo] += 1;
+      return real.set.call(this, valor);
+    }
+  });
+})();
+""",
+        })
+        cdp_chama(ws, contador, "Page.navigate", {
+            "url": f"http://127.0.0.1:{porta}/?janela=enxame&t={token}",
+        })
+        limite = time.time() + 12
+        pronto = False
+        while time.time() < limite:
+            pronto = bool(cdp_avalia(ws, contador,
+                "document.readyState === 'complete' && !EX.ocupado && "
+                "document.querySelectorAll('.enxame-reator').length === 1"))
+            if pronto:
+                break
+            time.sleep(0.1)
+        if not pronto:
+            raise RuntimeError("a janela do enxame não concluiu a primeira carga")
+
+        medidas["primeira"] = cdp_avalia(
+            ws, contador, "({...window.__f1Writes})")
+        time.sleep(2.25)
+        medidas["tick_igual"] = cdp_avalia(
+            ws, contador, "({...window.__f1Writes})")
+
+        # Um observador por região classifica toda escrita: atributo, texto ou filho.
+        cdp_avalia(ws, contador, r"""
+(() => {
+  if (window.__f1Observer) window.__f1Observer.disconnect();
+  const zero = () => ({reatores:0,doca:0,placar:0,fonte:0,remoto:0,outro:0,total:0,reconstrucoes:0});
+  window.__f1M = zero();
+  window.__f1Bucket = (no, atributo) => {
+    const el = no && no.nodeType === 1 ? no : no && no.parentElement;
+    if (!el) return 'outro';
+    const controles = ['ex-todos','ex-vivos','ex-falha','ex-ok','ex-dobrar'];
+    if (controles.includes(el.id) || controles.some(id => el.closest && el.closest('#'+id))) return 'reatores';
+    if (el.id === 'enxame' && atributo === 'data-doca') return 'doca';
+    for (const [id,chave] of Object.entries({
+      'enxame-reatores':'reatores','enxame-doca':'doca','enxame-placar':'placar',
+      'enxame-fonte':'fonte','enxame-remoto':'remoto'})) {
+      const alvo = document.getElementById(id);
+      if (alvo && (el === alvo || alvo.contains(el))) return chave;
+    }
+    return 'outro';
+  };
+  window.__f1Take = () => {
+    const atual = {...window.__f1M};
+    window.__f1M = zero();
+    return atual;
+  };
+  window.__f1Observer = new MutationObserver(lista => {
+    for (const m of lista) {
+      const chave = window.__f1Bucket(m.target, m.attributeName || '');
+      window.__f1M[chave] += 1;
+      window.__f1M.total += 1;
+      if (m.type === 'childList' && m.target.id === 'enxame-reatores')
+        window.__f1M.reconstrucoes += 1;
+    }
+  });
+  window.__f1Observer.observe(document.getElementById('enxame'), {
+    subtree:true, childList:true, attributes:true, characterData:true
+  });
+  window.__f1Take();
+  return true;
+})()
+""")
+
+        medidas["filtro"] = cdp_avalia(ws, contador, r"""
+(async () => {
+  __f1Take();
+  document.getElementById('ex-ok').click();
+  while (EX.ocupado) await new Promise(r => setTimeout(r, 20));
+  await new Promise(r => setTimeout(r, 180));
+  return __f1Take();
+})()
+""")
+        medidas["worker_aberto"] = cdp_avalia(ws, contador, r"""
+(async () => {
+  __f1Take();
+  document.querySelector('.enxame-w[data-worker="w-grok"] .enxame-w-cab').click();
+  await new Promise(r => setTimeout(r, 80));
+  return __f1Take();
+})()
+""")
+        medidas["dobra"] = cdp_avalia(ws, contador, r"""
+(async () => {
+  __f1Take();
+  document.querySelector('[data-dobra="prova-dourado"]').click();
+  await new Promise(r => setTimeout(r, 80));
+  return __f1Take();
+})()
+""")
+        medidas["abre_doca"] = cdp_avalia(ws, contador, r"""
+(async () => {
+  __f1Take();
+  document.querySelector('[data-abre="prova-dourado"]').click();
+  while (EX.ocupado) await new Promise(r => setTimeout(r, 20));
+  await new Promise(r => setTimeout(r, 180));
+  return __f1Take();
+})()
+""")
+        medidas["abre_remoto"] = cdp_avalia(ws, contador, r"""
+(async () => {
+  __f1Take();
+  document.querySelector('[data-remoto="prova-dourado/w-grok"]').click();
+  const limite = Date.now() + 5000;
+  while (!document.getElementById('ex-fecha-remoto') && Date.now() < limite)
+    await new Promise(r => setTimeout(r, 40));
+  await new Promise(r => setTimeout(r, 80));
+  return __f1Take();
+})()
+""")
+
+        # Doca com scroll/foco e remoto com recibo pendente: são as invariantes
+        # que uma reconstrução seguida de "restauração visual" não pode maquiar.
+        cdp_avalia(ws, contador, r"""
+(async () => {
+  const doca = document.getElementById('enxame-doca');
+  doca.style.height = '100px';
+  doca.style.overflow = 'auto';
+  doca.scrollTop = 60;
+  EX.remotoAcao = {nome:'parar', recibo:'recibo-f1-pendente'};
+  const saida = document.getElementById('ex-remoto-acao-saida');
+  if (saida) saida.innerHTML = '<b>previsão pendente F1</b>';
+  const botao = document.querySelector('[data-remoto-acao="parar"]');
+  if (botao) { botao.setAttribute('aria-pressed','true'); botao.textContent='confirmar: parar esta IA'; }
+  await new Promise(r => setTimeout(r, 900));
+  doca.scrollTop = 60;
+  const foco = document.getElementById('ex-fecha-doca');
+  foco.focus();
+  window.__f1Refs = {
+    card:document.querySelector('.enxame-reator'),
+    dobra:document.querySelector('[data-dobra="prova-dourado"]'),
+    worker:document.querySelector('.enxame-w[data-worker="w-grok"]'),
+    doca:document.querySelector('#enxame-doca .enxame-doca-topo'),
+    remoto:document.querySelector('#enxame-remoto .enxame-doca-topo'),
+    foco
+  };
+  window.__f1Estado = {
+    scroll:doca.scrollTop,
+    remoto:document.getElementById('enxame-remoto').innerHTML
+  };
+  __f1Take();
+  return true;
+})()
+""")
+
+        medidas["imovel_30s"] = cdp_avalia(ws, contador, r"""
+(async () => {
+  await new Promise(r => setTimeout(r, 30000));
+  const contagens = __f1Take();
+  const refs = window.__f1Refs;
+  const card = document.querySelector('.enxame-reator');
+  const dobra = document.querySelector('[data-dobra="prova-dourado"]');
+  const worker = document.querySelector('.enxame-w[data-worker="w-grok"]');
+  const docaNo = document.querySelector('#enxame-doca .enxame-doca-topo');
+  const remotoNo = document.querySelector('#enxame-remoto .enxame-doca-topo');
+  const doca = document.getElementById('enxame-doca');
+  return {contagens, identidade:{
+      card:refs.card.isSameNode(card), dobra:refs.dobra.isSameNode(dobra),
+      worker:refs.worker.isSameNode(worker), doca:refs.doca.isSameNode(docaNo),
+      remoto:refs.remoto.isSameNode(remotoNo)
+    }, estado:{
+      dobrado:card.classList.contains('recolhido'),
+      dobraAria:dobra.getAttribute('aria-expanded') === 'false',
+      workerAberto:worker.classList.contains('aberto'),
+      workerAria:worker.querySelector('.enxame-w-cab').getAttribute('aria-expanded') === 'true',
+      filtro:document.getElementById('ex-ok').getAttribute('aria-pressed') === 'true',
+      swarm:EX.swarm === 'prova-dourado', scroll:doca.scrollTop === window.__f1Estado.scroll,
+      foco:document.activeElement === refs.foco,
+      remoto:document.getElementById('enxame-remoto').innerHTML === window.__f1Estado.remoto,
+      recibo:EX.remotoAcao && EX.remotoAcao.recibo === 'recibo-f1-pendente'
+    }};
+})()
+""")
+
+        with (run / "progress" / "w-grok.jsonl").open("a", encoding="utf-8") as arq:
+            arq.write('{"ts":"08:11:00","etapa":3,"de":5,"estado":"rodando","nota":"passo novo F1"}\n')
+        medidas["progresso"] = cdp_avalia(ws, contador, r"""
+(async () => {
+  __f1Take();
+  const limite = Date.now() + 4500;
+  while (!document.getElementById('enxame-reatores').textContent.includes('passo novo F1') && Date.now() < limite)
+    await new Promise(r => setTimeout(r, 80));
+  const apareceu = document.getElementById('enxame-reatores').textContent.includes('passo novo F1');
+  await new Promise(r => setTimeout(r, 1100));
+  return {apareceu, contagens:__f1Take()};
+})()
+""")
+        medidas["estavel_6s"] = cdp_avalia(ws, contador, r"""
+(async () => {
+  __f1Take();
+  await new Promise(r => setTimeout(r, 6000));
+  return __f1Take();
+})()
+""")
+
+        with (run / "logs" / "w-codex.log").open("a", encoding="utf-8") as arq:
+            arq.write("x" * 2600)
+        medidas["log"] = cdp_avalia(ws, contador, r"""
+(async () => {
+  __f1Take();
+  const limite = Date.now() + 4500;
+  while (!(document.querySelector('.enxame-det-item.mau .peso') || {}).textContent?.includes('KB') && Date.now() < limite)
+    await new Promise(r => setTimeout(r, 80));
+  await new Promise(r => setTimeout(r, 220));
+  return {
+    apareceu:!!document.querySelector('.enxame-det-item.mau .peso') &&
+      document.querySelector('.enxame-det-item.mau .peso').textContent.includes('KB'),
+    contagens:__f1Take()
+  };
+})()
+""")
+
+        medidas["erro_primeiro"] = cdp_avalia(ws, contador, r"""
+(async () => {
+  while (EX.ocupado) await new Promise(r => setTimeout(r, 20));
+  window.__f1FetchReal = window.fetch;
+  window.fetch = (...args) => String(args[0]||'').includes('/api/iaswarm') &&
+    !String(args[0]||'').includes('/remoto')
+      ? Promise.reject(new Error('falha F1 repetida')) : window.__f1FetchReal(...args);
+  __f1Take();
+  await exTick();
+  await new Promise(r => setTimeout(r, 80));
+  return __f1Take();
+})()
+""")
+        medidas["erro_repetido"] = cdp_avalia(ws, contador, r"""
+(async () => {
+  while (EX.ocupado) await new Promise(r => setTimeout(r, 20));
+  __f1Take();
+  await exTick();
+  await new Promise(r => setTimeout(r, 80));
+  return __f1Take();
+})()
+""")
+        medidas["recuperacao"] = cdp_avalia(ws, contador, r"""
+(async () => {
+  window.fetch = window.__f1FetchReal;
+  while (EX.ocupado) await new Promise(r => setTimeout(r, 20));
+  __f1Take();
+  await exTick();
+  await new Promise(r => setTimeout(r, 120));
+  const contagens = __f1Take();
+  window.__f1Observer.disconnect();
+  return {contagens, recuperou:document.getElementById('enxame-reatores').textContent.includes('prova-dourado')};
+})()
+""")
+    except Exception as exc:
+        return {"block": str(exc), "parcial": medidas}
+    finally:
+        if ws is not None:
+            ws.close()
+        if chrome is not None and chrome.poll() is None:
+            chrome.terminate()
+            try:
+                chrome.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                chrome.kill()
+                chrome.wait(timeout=5)
+        shutil.rmtree(perfil, ignore_errors=True)
+    return medidas
+
+
+def servidor_runtime_main() -> int:
+    """Mantém fixture/servidor efêmeros vivos para um navegador MCP externo."""
+    home = Path(tempfile.mkdtemp(prefix="ui-enxame-runtime-home-"))
+    enxame = Path(tempfile.mkdtemp(prefix="ui-enxame-runtime-runs-"))
+    run = enxame / "prova-dourado"
+    (run / "progress").mkdir(parents=True)
+    (run / "logs").mkdir()
+    (run / "resultados").mkdir()
+    (run / "missao.md").write_text("# missão de prova do visualizador\n", encoding="utf-8")
+    (run / "workers.tsv").write_text(
+        "w-grok\tgrok\t5\n"
+        "w-codex\tcodex\t4\n",
+        encoding="utf-8")
+    (run / "progress" / "w-grok.jsonl").write_text(
+        '{"ts":"08:00:00","etapa":0,"de":5,"estado":"despachado","nota":"grok (beta)"}\n'
+        '{"ts":"08:10:00","etapa":2,"de":5,"estado":"rodando","nota":"pintando o ouro"}\n',
+        encoding="utf-8")
+    (run / "progress" / "w-codex.jsonl").write_text(
+        '{"ts":"08:02:00","etapa":0,"de":4,"estado":"despachado","nota":"codex"}\n'
+        '{"ts":"08:08:00","etapa":2,"de":4,"estado":"falhou","nota":"falha de prova"}\n',
+        encoding="utf-8")
+    (run / "logs" / "w-grok.log").write_text("linha 1\nlinha 2 do terminal\n", encoding="utf-8")
+    (run / "logs" / "w-codex.log").write_text("falha inicial\n", encoding="utf-8")
+    (run / "resultados" / "w-grok.md").write_text(
+        "missão: prova\nresultado: ok\n", encoding="utf-8")
+
+    porta = porta_livre(59900)
+    proc, token = sobe(home, porta, enxame)
+    if not token:
+        print("BLOCK runtime externo: servidor sem token", flush=True)
+        return 2
+    print("RUNTIME_F1 " + json.dumps({
+        "url": f"http://127.0.0.1:{porta}/?janela=enxame&t={token}",
+        "run": str(run), "porta": porta,
+    }, ensure_ascii=False), flush=True)
+    try:
+        return proc.wait()
+    except KeyboardInterrupt:
+        return 0
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=5)
+        shutil.rmtree(home, ignore_errors=True)
+        shutil.rmtree(enxame, ignore_errors=True)
+
+
 def main() -> int:
     print("— as peças na interface —")
     checa("o botão da gaveta no topo existe", 'id="btn-gaveta-topo"' in HTML)
@@ -135,6 +690,19 @@ def main() -> int:
     checa("M4: data-foco no abrir da doca", 'data-foco="abre:' in JS)
     checa("M4: exRender troca o DOM pelo envelope",
           "exTrocando(EX.reatores" in JS)
+
+    print("— F1 · assinatura semântica por alvo —")
+    bloco_ex = re.search(r"const EX\s*=\s*\{([\s\S]*?)\n\};", JS)
+    corpo_ex = bloco_ex.group(1) if bloco_ex else ""
+    checa("F1: EX.sig guarda exatamente os cinco alvos",
+          "sig:" in corpo_ex and all(
+              re.search(rf"\b{nome}\s*:\s*null\b", corpo_ex)
+              for nome in ("reatores", "doca", "placar", "fonte", "erro")
+          ))
+    checa("F1: a serialização é determinística e sem hash criptográfico",
+          "JSON.stringify" in JS and "crypto.subtle" not in JS)
+    checa("F1: animações transitórias expiram sem depender do próximo tick",
+          "setTimeout" in JS and "avancou" in JS and "estreia" in JS)
 
     print("— M3 · relógio da última evidência no cartão —")
     checa("M3: helper exHhmm existe", "function exHhmm" in JS)
@@ -193,12 +761,20 @@ def main() -> int:
     (run / "logs").mkdir()
     (run / "resultados").mkdir()
     (run / "missao.md").write_text("# missão de prova do visualizador\n", encoding="utf-8")
-    (run / "workers.tsv").write_text("w-grok\tgrok\t5\n", encoding="utf-8")
+    (run / "workers.tsv").write_text(
+        "w-grok\tgrok\t5\n"
+        "w-codex\tcodex\t4\n",
+        encoding="utf-8")
     (run / "progress" / "w-grok.jsonl").write_text(
         '{"ts":"08:00:00","etapa":0,"de":5,"estado":"despachado","nota":"grok (beta)"}\n'
-        '{"ts":"08:01:00","etapa":2,"de":5,"estado":"rodando","nota":"pintando o ouro"}\n',
+        '{"ts":"08:10:00","etapa":2,"de":5,"estado":"rodando","nota":"pintando o ouro"}\n',
+        encoding="utf-8")
+    (run / "progress" / "w-codex.jsonl").write_text(
+        '{"ts":"08:02:00","etapa":0,"de":4,"estado":"despachado","nota":"codex"}\n'
+        '{"ts":"08:08:00","etapa":2,"de":4,"estado":"falhou","nota":"falha de prova"}\n',
         encoding="utf-8")
     (run / "logs" / "w-grok.log").write_text("linha 1\nlinha 2 do terminal\n", encoding="utf-8")
+    (run / "logs" / "w-codex.log").write_text("falha inicial\n", encoding="utf-8")
     (run / "resultados" / "w-grok.md").write_text("missão: prova\nresultado: ok\n", encoding="utf-8")
 
     porta = porta_livre()
@@ -226,6 +802,81 @@ def main() -> int:
         checa("o remoto traz os eventos",
               isinstance(remoto.get("eventos"), list) and len(remoto["eventos"]) == 2)
 
+        print("— F1 · gate rápido + navegador real —")
+        estabilidade = estabilidade_enxame_browser(porta, token, run)
+        checa("F1: o instrumento conseguiu olhar o navegador real",
+              "block" not in estabilidade,
+              str(estabilidade.get("block", ""))[:220])
+        primeira = estabilidade.get("primeira") or {}
+        tick_igual = estabilidade.get("tick_igual") or {}
+        checa("F1: a primeira carga escreve uma vez por alvo",
+              all(primeira.get(k) == 1 for k in ("reatores", "doca", "placar", "fonte")),
+              repr(primeira))
+        checa("F1: a mesma resposta não acrescenta setter",
+              tick_igual == primeira, repr({"primeira": primeira, "tick": tick_igual}))
+
+        somente = lambda m, permitidos: (
+            m.get("total", 0) > 0 and
+            all(m.get(k, 0) == 0 for k in
+                ({"reatores", "doca", "placar", "fonte", "remoto", "outro"} - set(permitidos)))
+        )
+        filtro = estabilidade.get("filtro") or {}
+        checa("F1: filtro muda somente os reatores",
+              filtro.get("reatores", 0) > 0 and somente(filtro, {"reatores"}), repr(filtro))
+        aberto = estabilidade.get("worker_aberto") or {}
+        checa("F1: abrir worker é mutação local dos reatores",
+              aberto.get("reatores", 0) > 0 and somente(aberto, {"reatores"}), repr(aberto))
+        dobra = estabilidade.get("dobra") or {}
+        checa("F1: dobra muda somente os reatores",
+              dobra.get("reatores", 0) > 0 and somente(dobra, {"reatores"}), repr(dobra))
+        doca = estabilidade.get("abre_doca") or {}
+        checa("F1: selecionar doca muda somente reatores e doca",
+              doca.get("reatores", 0) > 0 and doca.get("doca", 0) > 0
+              and somente(doca, {"reatores", "doca"}), repr(doca))
+
+        imovel = estabilidade.get("imovel_30s") or {}
+        cont_imovel = imovel.get("contagens") or {}
+        print("  medição imóvel 30 s:", json.dumps(cont_imovel, ensure_ascii=False, sort_keys=True))
+        checa("F1: 30 s imóveis produzem exatamente zero mutações",
+              cont_imovel.get("total") == 0, repr(cont_imovel))
+        checa("F1: cartão, dobra, worker, doca e remoto são os mesmos nós",
+              imovel.get("identidade") and all(imovel["identidade"].values()),
+              repr(imovel.get("identidade")))
+        checa("F1: dobra, aberto, filtro, scroll, foco, seleção e recibo sobrevivem",
+              imovel.get("estado") and all(imovel["estado"].values()),
+              repr(imovel.get("estado")))
+
+        progresso = estabilidade.get("progresso") or {}
+        mut_progresso = progresso.get("contagens") or {}
+        checa("F1: append no progress aparece sem worker novo",
+              progresso.get("apareceu") is True, repr(progresso))
+        checa("F1: etapa/nota atualiza reatores e doca, não os outros alvos",
+              mut_progresso.get("reatores", 0) > 0 and mut_progresso.get("doca", 0) > 0
+              and somente(mut_progresso, {"reatores", "doca"}), repr(mut_progresso))
+        estavel = estabilidade.get("estavel_6s") or {}
+        checa("F1: após a atualização, seis segundos voltam a zero",
+              estavel.get("total") == 0, repr(estavel))
+
+        log = estabilidade.get("log") or {}
+        mut_log = log.get("contagens") or {}
+        checa("F1: crescimento de log aparece na doca aberta",
+              log.get("apareceu") is True, repr(log))
+        checa("F1: log isolado atualiza somente a doca",
+              mut_log.get("doca", 0) > 0 and somente(mut_log, {"doca"}), repr(mut_log))
+        erro_um = estabilidade.get("erro_primeiro") or {}
+        erro_dois = estabilidade.get("erro_repetido") or {}
+        checa("F1: o primeiro erro escreve reatores e fonte",
+              erro_um.get("reatores", 0) > 0 and erro_um.get("fonte", 0) > 0,
+              repr(erro_um))
+        checa("F1: o mesmo erro repetido faz zero escrita",
+              erro_dois.get("total") == 0, repr(erro_dois))
+        recuperacao = estabilidade.get("recuperacao") or {}
+        checa("F1: recuperação volta aos dados e invalida os alvos necessários",
+              recuperacao.get("recuperou") is True
+              and (recuperacao.get("contagens") or {}).get("reatores", 0) > 0
+              and (recuperacao.get("contagens") or {}).get("fonte", 0) > 0,
+              repr(recuperacao))
+
         print("— o que REPROVA —")
         for rota, esperado in (
             ("/api/iaswarm?run=../etc", 404),
@@ -248,7 +899,6 @@ def main() -> int:
             proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
             proc.kill()
-        import shutil
         shutil.rmtree(home, ignore_errors=True)
         shutil.rmtree(enxame, ignore_errors=True)
 
@@ -272,4 +922,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(servidor_runtime_main() if "--runtime-server" in sys.argv else main())
