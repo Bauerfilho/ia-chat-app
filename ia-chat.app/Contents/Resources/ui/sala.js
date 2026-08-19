@@ -8,7 +8,7 @@
    GET  /api/quem          -> presença (allowlist de leitura)
    GET  /api/iaswarm       -> {fonte, raiz, vivo, runs[]}
    GET  /api/iaswarm/remoto-> {eventos, log, resultado}  (leitura, um worker)
-   GET  /api/groupchat     -> {sessions, snapshots, msgs}
+   GET  /api/groupchat?desde=N -> {ultima, limites, corte, sessions, snapshots, msgs}
    POST /api/post          -> {de, texto, para[]}
    POST /api/sino          -> {notificar_operador}
    POST /api/<goal|plan|concluir|parar|refaz|decidi>
@@ -136,6 +136,7 @@ function instalaModosJanela(){
       <h2>Janelas das IAs</h2>
       <p>Ocupação da sessão atual. Nunca soma a sala.</p>
       <p class="gc-fonte" id="groupchat-fonte">telemetria: aguardando</p>
+      <p class="gc-fonte" id="groupchat-corte" role="status" aria-live="polite" hidden></p>
       <div id="groupchat-sessoes"></div>
     </aside>`;
   E.moldura.append(groupchat);
@@ -155,7 +156,10 @@ instalaModosJanela();
 const GC = {
   raiz:$('#groupchat'), conversa:$('#groupchat-conversa'), fio:$('#groupchat-fio'),
   sessoes:$('#groupchat-sessoes'), fonte:$('#groupchat-fonte'),
-  snapshots:[], sessions:[], msgs:[], ocupado:false, timer:null,
+  aviso:$('#groupchat-corte'), snapshots:[], sessions:[], msgs:[],
+  cursor:0, carregada:false, ocupado:false, timer:null, limites:{},
+  corteInicial:null, corteAtual:null, itensGrandesOmitidos:0,
+  telemetriaOmitida:0,
 };
 
 /* ── utilidades ──────────────────────────────────────────────────────────── */
@@ -498,19 +502,80 @@ function gcRenderSessoes(){
 }
 function gcRender(){
   if (!GC.fio) return;
-  const msgs = (GC.msgs.length ? GC.msgs : S.msgs.filter(m=>m.de !== S.sala.papel)).slice(-80);
+  const msgs = (GC.carregada ? GC.msgs :
+    S.msgs.filter(m=>m.de !== S.sala.papel)).slice(-80);
   GC.fio.innerHTML = msgs.length ? msgs.map(gcFalaHTML).join('') :
     `<section class="gc-estado-vazio"><span aria-hidden="true">◇</span>
       <h3>O groupchat está em silêncio</h3><p>Sem @, o compositor abaixo envia a todas as IAs ativas.</p></section>`;
   gcRenderSessoes();
 }
+
+function gcAtualizaAvisoCorte(corte, primeira){
+  if (!GC.aviso) return;
+  const c = corte && typeof corte === 'object' ? corte : {};
+  const motivo = String(c.motivo || '');
+  const omitidas = Math.max(0, Number(c.omitidas) || 0);
+  const pendentes = Math.max(0, Number(c.pendentes) || 0);
+  const telemetria = Math.max(0, Number(c.telemetria_omitida) || 0) +
+    Math.max(0, Number(c.sessoes_omitidas) || 0);
+
+  // O corte inicial não desaparece no tick limpo de dois segundos depois. Ele
+  // é parte do contexto desta tela e fica visível enquanto a aba estiver aberta.
+  if (primeira && c.ativo && c.direcao === 'inicio' && omitidas){
+    GC.corteInicial = {omitidas, limites:{...GC.limites}};
+  }
+  GC.corteAtual = c.ativo && pendentes ? {pendentes} : null;
+  if (motivo.includes('item_maior_que_teto')){
+    GC.itensGrandesOmitidos += Math.max(1, omitidas - pendentes);
+  }
+  GC.telemetriaOmitida = Math.max(GC.telemetriaOmitida, telemetria);
+
+  const partes = [];
+  if (GC.corteInicial){
+    const lim = GC.corteInicial.limites || {};
+    partes.push(`Contexto inicial limitado a ${Number(lim.itens)||'—'} mensagens / ` +
+      `${bytesLegiveis(Number(lim.bytes)||0)}; ${GC.corteInicial.omitidas} mensagens ` +
+      `anteriores permanecem no histórico da sala.`);
+  }
+  if (GC.corteAtual){
+    partes.push(`${GC.corteAtual.pendentes} mensagens novas aguardam o próximo ciclo.`);
+  }
+  if (GC.itensGrandesOmitidos){
+    partes.push(`${GC.itensGrandesOmitidos} mensagens excederam o teto da resposta; ` +
+      `permanecem no histórico da sala.`);
+  }
+  if (GC.telemetriaOmitida){
+    partes.push(`Telemetria reduzida: ${GC.telemetriaOmitida} registros ficaram fora da resposta.`);
+  }
+  const texto = partes.join(' ');
+  if (GC.aviso.textContent !== texto) GC.aviso.textContent = texto;
+  GC.aviso.hidden = !texto;
+}
+
 async function gcCarregar(){
-  const r = await fetch(url('/api/groupchat'), {cache:'no-store'});
+  const primeira = !GC.carregada;
+  const desde = Number.isSafeInteger(GC.cursor) && GC.cursor >= 0 ? GC.cursor : 0;
+  const r = await fetch(url('/api/groupchat','desde='+desde), {cache:'no-store'});
   if (!r.ok) throw new Error('HTTP '+r.status);
   const d = await r.json();
   GC.snapshots = Array.isArray(d.snapshots) ? d.snapshots : [];
   GC.sessions = Array.isArray(d.sessions) ? d.sessions : [];
-  GC.msgs = Array.isArray(d.msgs) ? d.msgs : [];
+  GC.limites = d.limites && typeof d.limites === 'object' ? d.limites : GC.limites;
+  const novas = Array.isArray(d.msgs) ? d.msgs : [];
+  if (primeira){
+    GC.msgs = novas.slice(-80);
+  } else {
+    const vistas = new Set(GC.msgs.map(m=>Number(m.n)));
+    for (const m of novas){
+      const n = Number(m.n);
+      if (!vistas.has(n)){ GC.msgs.push(m); vistas.add(n); }
+    }
+    GC.msgs = GC.msgs.slice(-80);
+  }
+  const recebido = Number(d.ultima);
+  if (Number.isSafeInteger(recebido) && recebido >= desde) GC.cursor = recebido;
+  GC.carregada = true;
+  gcAtualizaAvisoCorte(d.corte, primeira);
   if (GC.fonte) GC.fonte.textContent = 'telemetria: ' + (d.fonte || 'desconhecida');
 }
 async function gcTick(){
@@ -518,7 +583,7 @@ async function gcTick(){
   GC.ocupado = true;
   try{ await gcCarregar(); }
   catch(e){
-    GC.msgs = S.msgs.filter(m=>m.de !== S.sala.papel);
+    if (!GC.carregada) GC.msgs = S.msgs.filter(m=>m.de !== S.sala.papel);
     GC.sessions = S.naSala.map(gcDesconhecido);
     GC.snapshots = [];
     if (GC.fonte) GC.fonte.textContent = 'telemetria: indisponível';

@@ -30,6 +30,7 @@ CHROME = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
 
 _ok = 0
 _falhou = 0
+TETO_GROUPCHAT_CONTRATO = 48 * 1024
 
 
 def checa(nome: str, cond: bool, detalhe: str = "") -> None:
@@ -76,6 +77,35 @@ const zero = gcContexto({
             estimated_prompt_tokens:null, context_window_tokens:250000}
 });
 console.log(JSON.stringify({exact, compactou, estimado, zero}));
+"""
+    r = subprocess.run(
+        ["node", "-e", programa], capture_output=True, text=True, timeout=10
+    )
+    if r.returncode != 0:
+        return {"erro": (r.stderr or r.stdout).strip()}
+    try:
+        return json.loads(r.stdout)
+    except json.JSONDecodeError:
+        return {"erro": r.stdout.strip()}
+
+
+def aviso_corte_js() -> dict:
+    """Executa o aviso real e prova que o corte inicial não some no tick limpo."""
+    bytes_fn = trecho("function bytesLegiveis", "function haQuanto")
+    aviso_fn = trecho("function gcAtualizaAvisoCorte", "async function gcCarregar")
+    programa = bytes_fn + aviso_fn + r"""
+const fmtNum = new Intl.NumberFormat('pt-BR');
+const GC = {
+  aviso:{textContent:'',hidden:true}, limites:{itens:24,bytes:49152},
+  corteInicial:null,corteAtual:null,itensGrandesOmitidos:0,telemetriaOmitida:0
+};
+gcAtualizaAvisoCorte({ativo:true,motivo:'itens',omitidas:34,pendentes:0,
+  telemetria_omitida:0,sessoes_omitidas:0,direcao:'inicio'}, true);
+const inicial = {texto:GC.aviso.textContent,hidden:GC.aviso.hidden};
+gcAtualizaAvisoCorte({ativo:false,motivo:'nenhum',omitidas:0,pendentes:0,
+  telemetria_omitida:0,sessoes_omitidas:0,direcao:'nenhuma'}, false);
+const seguinte = {texto:GC.aviso.textContent,hidden:GC.aviso.hidden};
+console.log(JSON.stringify({inicial,seguinte}));
 """
     r = subprocess.run(
         ["node", "-e", programa], capture_output=True, text=True, timeout=10
@@ -137,6 +167,62 @@ def adaptador_python(tmp: Path) -> dict:
     }]
     modulo.sala = lambda: {"na_sala": ["codex", "qwen", "kimi"]}
     return modulo.groupchat()
+
+
+def cursor_python() -> dict:
+    """Exercita cursor e teto contra uma sala grande, sem reimplementar o corte."""
+    spec = importlib.util.spec_from_file_location("servir_groupchat_cursor", SERVIR)
+    if spec is None or spec.loader is None:
+        return {"erro": "não carreguei servir.py"}
+    modulo = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(modulo)
+
+    # 120 falas de ~3,6 KB: o limite de itens sozinho deixaria o JSON passar de
+    # 80 KB. Portanto, este fixture prova especificamente o teto de bytes.
+    mensagens = [{
+        "n": n,
+        "de": "codex" if n % 2 else "qwen",
+        "para": ["all"],
+        "ts": f"2026-08-18T15:{n % 60:02d}:08-03:00",
+        "texto": f"mensagem-{n}-" + ("x" * 3500),
+        "bytes": 3520,
+    } for n in range(1, 121)]
+    chamadas: list[int] = []
+
+    def falsas_desde(desde: int) -> list[dict]:
+        chamadas.append(desde)
+        return [m for m in mensagens if m["n"] > desde]
+
+    modulo.msgs_desde = falsas_desde
+    modulo.ultima = lambda: 120
+    modulo.sala = lambda: {"na_sala": ["codex", "qwen"]}
+    modulo._groupchat_atualizacoes = lambda: []
+    modulo.CFG["papel"] = "bauer"
+
+    inicial = modulo.groupchat(0)
+    vazio = modulo.groupchat(inicial.get("ultima", 0))
+    backlog = modulo.groupchat(80)
+
+    def resumo(resposta: dict) -> dict:
+        msgs = resposta.get("msgs") or []
+        return {
+            "bytes": len(json.dumps(resposta, ensure_ascii=False).encode()),
+            "itens": len(msgs),
+            "primeira": msgs[0]["n"] if msgs else None,
+            "ultima_msg": msgs[-1]["n"] if msgs else None,
+            "cursor": resposta.get("ultima"),
+            "ultima_sala": resposta.get("ultima_sala"),
+            "corte": resposta.get("corte") or {},
+        }
+
+    return {
+        "teto_configurado": modulo.TETO_GROUPCHAT_RESPOSTA,
+        "limite_itens": modulo.LIMITE_GROUPCHAT_ITENS,
+        "chamadas": chamadas,
+        "inicial": resumo(inicial),
+        "vazio": resumo(vazio),
+        "backlog": resumo(backlog),
+    }
 
 
 def porta_livre() -> int:
@@ -390,6 +476,62 @@ def main() -> int:
           'u.path == "/api/groupchat"' in fonte_py)
     checa("o caminho da telemetria não vem da query",
           'q.get("groupchat")' not in fonte_py and 'q.get("fonte")' not in fonte_py)
+
+    print("— cursor, lote e teto de bytes —")
+    cursor = cursor_python()
+    checa("a sala forjada executou o produtor real", "erro" not in cursor,
+          str(cursor.get("erro", ""))[:180])
+    checa("o teto contratual é independente e vale 48 KiB",
+          cursor.get("teto_configurado") == TETO_GROUPCHAT_CONTRATO,
+          repr(cursor.get("teto_configurado")))
+    inicial = cursor.get("inicial") or {}
+    backlog = cursor.get("backlog") or {}
+    vazio = cursor.get("vazio") or {}
+    checa("sala forjada grande não passa do teto",
+          max(inicial.get("bytes", 10**9), backlog.get("bytes", 10**9))
+          <= TETO_GROUPCHAT_CONTRATO,
+          f"inicial={inicial.get('bytes')} backlog={backlog.get('bytes')} ")
+    checa("o limite de itens também é aplicado",
+          0 < inicial.get("itens", 0) <= 24 and
+          0 < backlog.get("itens", 0) <= 24,
+          f"inicial={inicial.get('itens')} backlog={backlog.get('itens')}")
+    checa("primeiro lote traz o presente e declara o passado cortado",
+          inicial.get("ultima_msg") == 120 and inicial.get("cursor") == 120 and
+          inicial.get("corte", {}).get("ativo") is True and
+          inicial.get("corte", {}).get("direcao") == "inicio" and
+          inicial.get("corte", {}).get("omitidas", 0) > 0,
+          repr(inicial))
+    checa("tick no cursor não relê a sala",
+          vazio.get("itens") == 0 and vazio.get("cursor") == 120 and
+          cursor.get("chamadas", [])[:2] == [0, 120],
+          repr({"vazio": vazio, "chamadas": cursor.get("chamadas")}))
+    checa("backlog avança por lote sem saltar em silêncio",
+          80 < backlog.get("cursor", 0) < 120 and
+          backlog.get("corte", {}).get("pendentes", 0) > 0 and
+          backlog.get("corte", {}).get("direcao") == "fim",
+          repr(backlog))
+    cliente_cursor = trecho("async function gcCarregar", "async function gcTick")
+    checa("o cliente envia e atualiza o mesmo cursor desde",
+          "url('/api/groupchat','desde='+desde)" in cliente_cursor and
+          "GC.cursor = recebido" in cliente_cursor)
+    checa("o corte é anunciado em região viva",
+          'id="groupchat-corte" role="status" aria-live="polite"' in JS and
+          "function gcAtualizaAvisoCorte" in JS)
+    checa("o aviso inicial persiste após o tick seguinte",
+          "GC.corteInicial" in trecho(
+              "function gcAtualizaAvisoCorte", "async function gcCarregar") and
+          "permanecem no histórico da sala" in JS)
+    aviso = aviso_corte_js()
+    checa("o aviso real executa em JavaScript", "erro" not in aviso,
+          str(aviso.get("erro", ""))[:180])
+    aviso_inicial = aviso.get("inicial") or {}
+    aviso_seguinte = aviso.get("seguinte") or {}
+    checa("o corte continua visível depois de resposta limpa",
+          aviso_inicial.get("hidden") is False and
+          aviso_seguinte.get("hidden") is False and
+          aviso_inicial.get("texto") == aviso_seguinte.get("texto") and
+          "34 mensagens anteriores" in aviso_seguinte.get("texto", ""),
+          repr(aviso))
 
     print("— a barra mede a sessão da IA —")
     dados = normalizacao_js()

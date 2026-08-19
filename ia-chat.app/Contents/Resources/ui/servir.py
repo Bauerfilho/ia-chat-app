@@ -166,6 +166,18 @@ GROUPCHAT_FONTE = Path(os.environ.get(
 )).expanduser()
 TETO_GROUPCHAT_JSONL = 1024 * 1024
 
+# Limites da resposta do groupchat, medidos na sala real em 18/08.
+# Uma mensagem ocupa 1.537 B na mediana e 3.172 B no p95; o envelope atual,
+# sem mensagens, ocupa 5.328 B. Assim, 24 itens caberiam em ~42 KiB no caso
+# mediano, enquanto o teto duro de 48 KiB segura mensagens longas e mantém
+# aproximadamente as 20 falas mais recentes no primeiro carregamento.
+LIMITE_GROUPCHAT_ITENS = 24
+LIMITE_GROUPCHAT_SNAPSHOTS = 48
+TETO_GROUPCHAT_RESPOSTA = 48 * 1024
+# A resposta reserva espaço para preencher o aviso de corte depois da seleção.
+# O gate final ainda mede o JSON exato; esta margem evita retirar item no fim.
+MARGEM_GROUPCHAT_CORTE = 1024
+
 # O favicon viaja DENTRO deste arquivo, em base64, e não como um arquivo ao lado.
 # Motivo medido, não estético: `montar.sh` copia para o bundle uma lista fixa de
 # quatro nomes (index.html, estilo.css, sala.js, servir.py). Um `favicon.ico`
@@ -376,9 +388,24 @@ def _groupchat_atualizacoes() -> list[dict]:
     return saida
 
 
-def groupchat() -> dict:
-    """Snapshot legível pelo terceiro modo, sem nenhuma escrita no núcleo."""
-    mensagens = [m for m in msgs_desde(0) if m.get("de") != CFG["papel"]]
+def _groupchat_bytes(resposta: dict) -> int:
+    """Mede o mesmo JSON que `_json` envia, antes da compressão HTTP."""
+    return len(json.dumps(resposta, ensure_ascii=False).encode())
+
+
+def groupchat(desde: int = 0) -> dict:
+    """Lote incremental legível pelo terceiro modo, sem escrita no núcleo.
+
+    `desde` segue a gramática já usada por `/api/sala`: é o último número que
+    o cliente consumiu. No primeiro carregamento (`desde=0`) entram as falas
+    mais recentes; depois, entram somente números maiores que o cursor.
+    """
+    desde = max(0, int(desde))
+    # Esta é a mudança central: depois do primeiro lote, o núcleo já pode abrir
+    # só a faixa posterior ao cursor, em vez de reler a sala inteira a cada 2 s.
+    brutas = msgs_desde(desde)
+    fim_lote = max([desde, *(int(m.get("n") or desde) for m in brutas)])
+    mensagens = [m for m in brutas if m.get("de") != CFG["papel"]]
     atualizacoes = _groupchat_atualizacoes()
     ultimas: dict[str, dict] = {}
     for item in atualizacoes:
@@ -406,13 +433,156 @@ def groupchat() -> dict:
                          "session_state": "unknown"},
             "actions": [],
         }
-    return {
+    snapshots = atualizacoes[-LIMITE_GROUPCHAT_SNAPSHOTS:]
+    telemetria_omitida = max(0, len(atualizacoes) - len(snapshots))
+    sessoes = list(ultimas.values())
+    resposta = {
         "fonte": str(GROUPCHAT_FONTE) if GROUPCHAT_FONTE.is_file()
                  else "sem telemetria",
-        "sessions": list(ultimas.values()),
-        "snapshots": atualizacoes,
-        "msgs": mensagens,
+        "desde": desde,
+        # `ultima` é o cursor realmente consumido; `ultima_sala` permite à UI
+        # distinguir "estou em dia" de "há outro lote para buscar".
+        "ultima": desde,
+        "ultima_sala": max(ultima(), fim_lote),
+        "limites": {
+            "itens": LIMITE_GROUPCHAT_ITENS,
+            "bytes": TETO_GROUPCHAT_RESPOSTA,
+        },
+        "corte": {
+            "ativo": False,
+            "motivo": "nenhum",
+            "omitidas": 0,
+            "pendentes": 0,
+            "telemetria_omitida": telemetria_omitida,
+            "sessoes_omitidas": 0,
+            "direcao": "nenhuma",
+        },
+        "sessions": sessoes,
+        "snapshots": snapshots,
+        "msgs": [],
     }
+
+    # A telemetria também é entrada externa. Se ela crescer ou trouxer uma ação
+    # enorme, perde os snapshots mais antigos antes de roubar o teto da conversa.
+    while (_groupchat_bytes(resposta) >
+           TETO_GROUPCHAT_RESPOSTA - MARGEM_GROUPCHAT_CORTE and snapshots):
+        snapshots.pop(0)
+        telemetria_omitida += 1
+
+    # Um produtor pode anexar saídas grandes às sessões atuais. Mantém a sessão
+    # e sua barra de contexto, mas dobra fora as ações se o envelope estourar.
+    if (_groupchat_bytes(resposta) >
+            TETO_GROUPCHAT_RESPOSTA - MARGEM_GROUPCHAT_CORTE):
+        for i, sessao in enumerate(list(sessoes)):
+            acoes = sessao.get("actions")
+            if not acoes:
+                continue
+            sessoes[i] = {**sessao, "actions": []}
+            telemetria_omitida += len(acoes)
+            if (_groupchat_bytes(resposta) <=
+                    TETO_GROUPCHAT_RESPOSTA - MARGEM_GROUPCHAT_CORTE):
+                break
+
+    # Última defesa para um sidecar patológico: sessão omitida é declarada no
+    # mesmo aviso de corte; o JSON nunca ultrapassa o teto em silêncio.
+    sessoes_omitidas = 0
+    while (_groupchat_bytes(resposta) >
+           TETO_GROUPCHAT_RESPOSTA - MARGEM_GROUPCHAT_CORTE and sessoes):
+        sessoes.pop(0)
+        sessoes_omitidas += 1
+
+    limite_bytes = TETO_GROUPCHAT_RESPOSTA - MARGEM_GROUPCHAT_CORTE
+    selecionadas: list[dict] = []
+    motivo_bytes = False
+    motivo_itens = False
+    omitidas_grandes = 0
+
+    if desde == 0:
+        # Primeiro carregamento: contexto recente, em ordem cronológica. Começa
+        # da fala mais nova e recua enquanto houver item e bytes disponíveis.
+        for mensagem in reversed(mensagens):
+            if len(selecionadas) >= LIMITE_GROUPCHAT_ITENS:
+                motivo_itens = True
+                break
+            proposta = [mensagem, *selecionadas]
+            resposta["msgs"] = proposta
+            if _groupchat_bytes(resposta) > limite_bytes:
+                resposta["msgs"] = selecionadas
+                motivo_bytes = True
+                break
+            selecionadas = proposta
+        # O lote inicial deliberadamente ancora no presente; o aviso informa
+        # quantas falas antigas ficaram fora, sem fingir que nada foi cortado.
+        resposta["ultima"] = fim_lote
+    else:
+        # Atualizações caminham para a frente. Mensagens do próprio papel não
+        # aparecem no groupchat, mas ainda avançam o cursor para não serem
+        # relidas para sempre.
+        cursor = desde
+        for mensagem in brutas:
+            numero = int(mensagem.get("n") or cursor)
+            if mensagem.get("de") == CFG["papel"]:
+                cursor = max(cursor, numero)
+                continue
+            if len(selecionadas) >= LIMITE_GROUPCHAT_ITENS:
+                motivo_itens = True
+                break
+            resposta["msgs"] = [*selecionadas, mensagem]
+            if _groupchat_bytes(resposta) > limite_bytes:
+                resposta["msgs"] = selecionadas
+                motivo_bytes = True
+                if not selecionadas:
+                    # Uma fala maior que o teto não pode congelar o cursor. Ela
+                    # fica na sala canônica e a omissão aparece no aviso.
+                    cursor = max(cursor, numero)
+                    omitidas_grandes += 1
+                    continue
+                break
+            selecionadas.append(mensagem)
+            cursor = max(cursor, numero)
+        resposta["ultima"] = cursor
+
+    resposta["msgs"] = selecionadas
+    omitidas = max(0, len(mensagens) - len(selecionadas))
+    pendentes = (sum(1 for m in mensagens
+                     if int(m.get("n") or 0) > resposta["ultima"])
+                 if desde > 0 else 0)
+    motivos = []
+    if motivo_itens:
+        motivos.append("itens")
+    if motivo_bytes:
+        motivos.append("bytes")
+    if telemetria_omitida or sessoes_omitidas:
+        motivos.append("telemetria")
+    if omitidas_grandes:
+        motivos.append("item_maior_que_teto")
+    corte_ativo = bool(omitidas or telemetria_omitida or sessoes_omitidas)
+    resposta["corte"] = {
+        "ativo": corte_ativo,
+        "motivo": "+".join(dict.fromkeys(motivos)) if motivos else "nenhum",
+        "omitidas": omitidas,
+        "pendentes": pendentes,
+        "telemetria_omitida": telemetria_omitida,
+        "sessoes_omitidas": sessoes_omitidas,
+        "direcao": "inicio" if desde == 0 and omitidas else
+                   "fim" if desde > 0 and omitidas else "nenhuma",
+    }
+
+    # Gate dentro do produtor: a conta final inclui o aviso real, não uma
+    # estimativa. A margem acima torna esta defesa normalmente um no-op.
+    while _groupchat_bytes(resposta) > TETO_GROUPCHAT_RESPOSTA and selecionadas:
+        if desde == 0:
+            selecionadas.pop(0)       # preserva as falas mais recentes
+        else:
+            selecionadas.pop()        # preserva um prefixo sem buraco
+        resposta["msgs"] = selecionadas
+        resposta["corte"]["ativo"] = True
+        resposta["corte"]["motivo"] = "bytes"
+        resposta["corte"]["omitidas"] += 1
+        if desde > 0:
+            resposta["ultima"] = (int(selecionadas[-1].get("n") or desde)
+                                   if selecionadas else desde)
+    return resposta
 
 
 # ── compressão ───────────────────────────────────────────────────────────────
@@ -592,7 +762,13 @@ class Sala(BaseHTTPRequestHandler):
         if u.path == "/api/iaswarm/remoto":
             return self._iaswarm_remoto(q)
         if u.path == "/api/groupchat":
-            return self._json(groupchat())
+            try:
+                desde_groupchat = int((q.get("desde") or ["0"])[0])
+            except (TypeError, ValueError):
+                return self._json({"erro": "desde precisa ser inteiro"}, 400)
+            if desde_groupchat < 0:
+                return self._json({"erro": "desde não pode ser negativo"}, 400)
+            return self._json(groupchat(desde_groupchat))
         if u.path == "/api/mapa":
             return self._mapa()
         if u.path.count("/") == 1 and u.path[1:]:
