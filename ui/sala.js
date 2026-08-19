@@ -158,6 +158,7 @@ const GC = {
   sessoes:$('#groupchat-sessoes'), fonte:$('#groupchat-fonte'),
   aviso:$('#groupchat-corte'), snapshots:[], sessions:[], msgs:[],
   cursor:0, carregada:false, ocupado:false, timer:null, limites:{},
+  fioHTML:null, sessoesHTML:null,
   corteInicial:null, corteAtual:null, itensGrandesOmitidos:0,
   telemetriaOmitida:0,
 };
@@ -488,7 +489,7 @@ function gcVivacidade(registro){
 }
 function gcRenderSessoes(){
   if (!GC.sessoes) return;
-  GC.sessoes.innerHTML = GC.sessions.length ? GC.sessions.map(registro=>{
+  const html = GC.sessions.length ? GC.sessions.map(registro=>{
     const ia = corDe(registro.ia_id), vida = gcVivacidade(registro);
     return `<section class="gc-sessao" style="--ia-t:var(--${ia}-t)">
       <header><span class="gc-identidade-ponto" aria-hidden="true"></span>
@@ -499,14 +500,23 @@ function gcRenderSessoes(){
     </section>`;
   }).join('') : `<section class="gc-estado-vazio"><span aria-hidden="true">◇</span>
     <h3>Nenhuma IA ativa</h3><p>As sessões aparecem quando entram na sala.</p></section>`;
+  if (GC.sessoesHTML === html) return;
+  GC.sessoes.innerHTML = html;
+  GC.sessoesHTML = html;
 }
 function gcRender(){
   if (!GC.fio) return;
   const msgs = (GC.carregada ? GC.msgs :
     S.msgs.filter(m=>m.de !== S.sala.papel)).slice(-80);
-  GC.fio.innerHTML = msgs.length ? msgs.map(gcFalaHTML).join('') :
+  const html = msgs.length ? msgs.map(gcFalaHTML).join('') :
     `<section class="gc-estado-vazio"><span aria-hidden="true">◇</span>
       <h3>O groupchat está em silêncio</h3><p>Sem @, o compositor abaixo envia a todas as IAs ativas.</p></section>`;
+  // Compara a saída derivada, não o DOM vivo: um <details> aberto pelo dono não
+  // pode transformar o tick limpo em motivo para reconstruir a conversa inteira.
+  if (GC.fioHTML !== html){
+    GC.fio.innerHTML = html;
+    GC.fioHTML = html;
+  }
   gcRenderSessoes();
 }
 

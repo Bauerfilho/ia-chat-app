@@ -118,6 +118,63 @@ console.log(JSON.stringify({inicial,seguinte}));
         return {"erro": r.stdout.strip()}
 
 
+def estabilidade_render_js() -> dict:
+    """Executa o render real e conta escritas nos dois alvos do groupchat."""
+    render_fn = trecho("function gcRenderSessoes", "function gcAtualizaAvisoCorte")
+    programa = r"""
+function alvo(){
+  let html = '';
+  return {
+    mutacoes:0,
+    get innerHTML(){ return html; },
+    set innerHTML(valor){ html = valor; this.mutacoes += 1; }
+  };
+}
+const fio = alvo(), sessoes = alvo();
+const GC = {
+  fio, sessoes, carregada:true,
+  msgs:[{n:1}], snapshots:[{versao:1}],
+  sessions:[{ia_id:'codex',model_id:'m1',session_id:'s1',context:{}}],
+  fioHTML:null, sessoesHTML:null
+};
+const S = {msgs:[],sala:{papel:'bauer'}};
+const corDe = valor => valor;
+const esc = valor => String(valor == null ? '' : valor);
+function gcVivacidade(){ return {estado:'ok',rotulo:'fresco'}; }
+function gcBarraHTML(registro){ return `<span>${registro.model_id}</span>`; }
+function gcFalaHTML(m){
+  const snapshot = GC.snapshots[0] || {};
+  const sessao = GC.sessions[0] || {};
+  return `<article>${m.n}:${snapshot.versao || 0}:${sessao.model_id || ''}</article>`;
+}
+""" + render_fn + r"""
+const medidas = {};
+gcRender();
+medidas.primeiro = {fio:fio.mutacoes,sessoes:sessoes.mutacoes};
+gcRender();
+medidas.limpo = {fio:fio.mutacoes,sessoes:sessoes.mutacoes};
+GC.msgs.push({n:2});
+gcRender();
+medidas.mensagem = {fio:fio.mutacoes,sessoes:sessoes.mutacoes};
+GC.snapshots = [{versao:2}];
+gcRender();
+medidas.snapshot = {fio:fio.mutacoes,sessoes:sessoes.mutacoes};
+GC.sessions = [{ia_id:'codex',model_id:'m2',session_id:'s1',context:{}}];
+gcRender();
+medidas.sessao = {fio:fio.mutacoes,sessoes:sessoes.mutacoes};
+console.log(JSON.stringify(medidas));
+"""
+    r = subprocess.run(
+        ["node", "-e", programa], capture_output=True, text=True, timeout=10
+    )
+    if r.returncode != 0:
+        return {"erro": (r.stderr or r.stdout).strip()}
+    try:
+        return json.loads(r.stdout)
+    except json.JSONDecodeError:
+        return {"erro": r.stdout.strip()}
+
+
 def adaptador_python(tmp: Path) -> dict:
     """Carrega o servidor com sidecar isolado e sala falsa de peso extremo."""
     sidecar = tmp / "groupchat.jsonl"
@@ -532,6 +589,38 @@ def main() -> int:
           aviso_inicial.get("texto") == aviso_seguinte.get("texto") and
           "34 mensagens anteriores" in aviso_seguinte.get("texto", ""),
           repr(aviso))
+
+    print("— tick limpo não reconstrói a tela —")
+    estabilidade = estabilidade_render_js()
+    checa("o render real executa em JavaScript", "erro" not in estabilidade,
+          str(estabilidade.get("erro", ""))[:180])
+    checa("a primeira carga escreve uma vez em cada alvo",
+          estabilidade.get("primeiro") == {"fio": 1, "sessoes": 1},
+          repr(estabilidade))
+    checa("tick sem mudança faz zero novas mutações",
+          estabilidade.get("limpo") == estabilidade.get("primeiro"),
+          repr(estabilidade))
+    checa("mensagem nova atualiza somente o fio",
+          estabilidade.get("mensagem") == {"fio": 2, "sessoes": 1},
+          repr(estabilidade))
+    checa("snapshot novo atualiza o fio existente",
+          estabilidade.get("snapshot") == {"fio": 3, "sessoes": 1},
+          repr(estabilidade))
+    checa("sessão nova atualiza somente o que deriva dela",
+          estabilidade.get("sessao") == {"fio": 4, "sessoes": 2},
+          repr(estabilidade))
+
+    ciclo_groupchat = trecho("function gcRender", "function desenhaPresenca")
+    checa("o tick do groupchat não recria o painel de resultado",
+          "E.paleta" not in ciclo_groupchat and "painelPaleta" not in ciclo_groupchat)
+    painel_css = trecho(".paleta.paleta--painel", ".paleta-topo", CSS)
+    checa("o painel é opaco e participa do fluxo",
+          "position:static" in painel_css and
+          "background:var(--superf-alta)" in painel_css)
+    fio_css = trecho(".groupchat-fio", ".groupchat-lateral", CSS)
+    checa("o fio usa a coluna canônica de 74ch centralizada",
+          "--leitura:74ch" in CSS and "width:100%" in fio_css and
+          "max-width:var(--leitura)" in fio_css and "margin-inline:auto" in fio_css)
 
     print("— a barra mede a sessão da IA —")
     dados = normalizacao_js()

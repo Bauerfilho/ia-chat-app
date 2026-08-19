@@ -527,7 +527,8 @@ code,kbd,.num{font-family:var(--mono); font-variant-numeric:tabular-nums}
    flutuar. Flutuando, o resultado crescia sobre a conversa e virava um borrão
    ilegível no meio do chat (defeito do dono, 18/08). No fluxo, o compositor
    cresce, a conversa (1fr) encolhe e o chat SOBE; ✕/Esc fazem descer. */
-.paleta.paleta--painel{position:static;margin:0 0 var(--u);max-height:42vh;overflow:auto}
+.paleta.paleta--painel{position:static;margin:0 0 var(--u);max-height:42vh;overflow:auto;
+  background:var(--superf-alta)}
 .paleta-topo{display:flex;align-items:center;justify-content:space-between;
   padding:6px var(--u2);border-bottom:1px solid var(--borda);background:var(--ouro-veu);
   position:sticky;top:0}
@@ -974,7 +975,7 @@ html[data-janela="groupchat"] .cabeca-busca{display:none}
 .groupchat[hidden]{display:none!important}
 html[data-janela="groupchat"] .groupchat{display:grid}
 .groupchat-conversa{min-width:0;min-height:0;overflow:auto;overscroll-behavior:contain}
-.groupchat-fio{min-width:0;max-width:var(--leitura);margin:0 auto;
+.groupchat-fio{width:100%;min-width:0;max-width:var(--leitura);margin-inline:auto;
   padding:var(--u3) var(--u4) var(--u4);display:flex;flex-direction:column;gap:22px}
 .groupchat-lateral{min-width:0;overflow:auto;padding:18px 16px var(--u3);
   border-left:1px solid var(--borda);background:color-mix(in srgb,var(--superf) 88%,transparent)}
