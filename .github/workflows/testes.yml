@@ -41,7 +41,10 @@ env:
 jobs:
   bateria:
     name: bateria · python ${{ matrix.interpretador }}
-    runs-on: macos-latest
+    # `macos-latest` migrou para macOS 26 e o Python não-sistema passou a
+    # expirar em localhost no runner hospedado. macOS 15 continua suportado e
+    # mantém os servidores reais da bateria, sem transformar TCP em mock.
+    runs-on: macos-15
     timeout-minutes: 15
     strategy:
       fail-fast: false
