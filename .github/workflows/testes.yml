@@ -41,10 +41,11 @@ env:
 jobs:
   bateria:
     name: bateria · python ${{ matrix.interpretador }}
-    # `macos-latest` migrou para macOS 26 e o Python não-sistema passou a
-    # expirar em localhost no runner hospedado. macOS 15 continua suportado e
-    # mantém os servidores reais da bateria, sem transformar TCP em mock.
-    runs-on: macos-15
+    # O Python não-sistema expira em localhost no runner ARM hospedado, tanto no
+    # macOS 26 quanto no 15; `/usr/bin/python3` passa no mesmo host. A perna
+    # moderna vai para o runner Intel suportado e continua executando a bateria
+    # INTEIRA. Nenhum teste TCP vira mock ou ⊘.
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -57,7 +58,11 @@ jobs:
         #    é a única forma de testar 3.9 neste runner.
         #  · `moderno`  — o Python de hoje, que pega o contrário: sintaxe e stdlib
         #    que mudam sob os pés.
-        interpretador: [sistema, moderno]
+        include:
+          - interpretador: sistema
+            runner: macos-15
+          - interpretador: moderno
+            runner: macos-15-intel
 
     steps:
       - name: este repositório
