@@ -109,12 +109,6 @@ jobs:
           echo "::error::$REPO_IRMAO existe (HTTP $codigo) mas não veio para o workspace — permissão, nome ou rede."
           exit 1
 
-      - name: python moderno
-        if: steps.nucleo.outputs.tem == '1' && (matrix.interpretador == 'moderno')
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.13'
-
       # O valor entra por `env`, não por interpolação dentro do shell: aqui ele é
       # literal da minha própria matriz, mas a regra de nunca costurar expressão
       # em `run:` vale mesmo quando a entrada é confiável — é o hábito que impede
@@ -131,7 +125,16 @@ jobs:
               exit 1
             fi
           else
+            # O toolcache do setup-python 3.13.14, no runner macos-26-arm64,
+            # fez localhost expirar em dez testes enquanto este mesmo runner
+            # passou inteiro com o Python do sistema. A perna moderna usa agora
+            # o Python moderno integrado à imagem e prova que não duplicou a 3.9.
             PY="$(command -v python3)"
+            if [ "$PY" = "/usr/bin/python3" ]; then
+              echo "::error::a perna moderna resolveu para $PY e duplicaria a perna sistema."
+              exit 1
+            fi
+            "$PY" -c 'import sys; assert sys.version_info >= (3, 13), sys.version'
           fi
           echo "PY=$PY" >> "$GITHUB_ENV"
           echo "· interpretador: $PY"
