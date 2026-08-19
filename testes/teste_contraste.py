@@ -134,6 +134,7 @@ def pares_palha(t: dict, base: dict) -> list[tuple[str, str, tuple, float]]:
         ("compositor · pílula", v("--caixa-pilula"), v("--caixa-fundo"), 4.5),
         ("trilho · rótulo", v("--tinta-3-carvao"), carvao, 4.5),
         ("trilho · botão", v("--palha-400"), carvao, 4.5),
+        ("trilho · wordmark IASWARM", v("--ouro-claro"), carvao, 4.5),
         # o item destacado da paleta soma o véu dourado à superfície alta
         ("paleta · comando", v("--ouro-tinta"),
          sobre(cor(resolve("--ouro-veu", t, base)), v("--palha-000")), 4.5),
@@ -190,6 +191,7 @@ def pares_carvao(t: dict, base: dict) -> list[tuple[str, str, tuple, float]]:
         ("compositor · contador", v("--caixa-fraca"), v("--caixa-fundo"), 4.5),
         ("compositor · pílula", v("--caixa-pilula"), v("--caixa-fundo"), 4.5),
         ("trilho · rótulo", v("--tinta-3-carvao"), v("--carvao-800"), 4.5),
+        ("trilho · wordmark IASWARM", v("--ouro-claro"), v("--carvao-800"), 4.5),
         # o item destacado da paleta soma o véu dourado à superfície alta
         ("paleta · comando", v("--ouro-tinta"),
          sobre(cor(resolve("--ouro-veu", t, base)), superf_alta), 4.5),
@@ -240,6 +242,9 @@ def roda(nome: str, pares) -> None:
 def main() -> int:
     texto = CSS.read_text(encoding="utf-8")
     base, carvao = blocos(texto)
+    nucleo = re.search(r"\.enxame-logo-trilho-nucleo\{([^}]*)\}", texto)
+    checa("o núcleo visível do wordmark usa --ouro-claro",
+          bool(nucleo) and "fill:var(--ouro-claro)" in nucleo.group(1))
     roda("palha", pares_palha(base, base))
     roda("carvão", pares_carvao(carvao, base))
     print(f"\n{_ok} ✔ / {_falhou} ✗")

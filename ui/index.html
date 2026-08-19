@@ -55,7 +55,7 @@
 <div class="moldura">
 
   <!-- TRILHO — carvão: é aqui que a cor por IA vive viva ------------------ -->
-  <nav class="trilho" aria-label="Presença na sala">
+  <nav class="trilho" aria-label="Navegação e presença na sala">
     <div class="trilho-marca" title="ia-chat">
       <span class="marca-glifo" aria-hidden="true">◈</span>
       <span class="marca-nome">ia<i>·</i>chat</span>
@@ -69,9 +69,31 @@
               aria-label="Sino do dono desligado" title="Ligar sino do dono">
         <span class="trilho-btn-glifo" id="sino-glifo" aria-hidden="true">🔕</span>
       </button>
-      <button class="trilho-btn" id="btn-enxame" aria-pressed="false"
-              aria-label="Abrir a janela do IASWARM" title="IASWARM">
-        <span class="enxame-letreiro" aria-hidden="true">IASWARM</span>
+      <button type="button" class="trilho-btn" id="btn-enxame"
+              aria-pressed="false" aria-controls="enxame"
+              aria-label="Abrir a janela do IASWARM" title="Abrir IASWARM">
+        <svg class="enxame-logo-trilho" viewBox="0 0 620 168"
+             aria-hidden="true" focusable="false">
+          <defs>
+            <linearGradient id="iaswarm-trilho-ouro" x1="0" y1="0" x2="1" y2="0">
+              <stop offset="0" stop-color="#886C2E"/>
+              <stop offset=".45" stop-color="#D4B25F"/>
+              <stop offset="1" stop-color="#E8CE8E"/>
+            </linearGradient>
+            <filter id="iaswarm-trilho-halo" x="-40%" y="-60%" width="180%" height="220%">
+              <feGaussianBlur stdDeviation="6"/>
+            </filter>
+            <g id="iaswarm-trilho-palavra">
+              <text x="310" y="0" text-anchor="middle" font-size="96">IASWARM</text>
+              <rect x="42" y="19" width="536" height="3" rx="1.5"/>
+            </g>
+          </defs>
+          <use href="#iaswarm-trilho-palavra" y="96"
+               fill="url(#iaswarm-trilho-ouro)"
+               filter="url(#iaswarm-trilho-halo)" opacity=".55"/>
+          <use class="enxame-logo-trilho-nucleo"
+               href="#iaswarm-trilho-palavra" y="96"/>
+        </svg>
       </button>
       <button class="trilho-btn" id="btn-tema" aria-label="Alternar tema claro e escuro" title="Alternar tema (⌘⇧L)">
         <span class="trilho-btn-glifo" aria-hidden="true">◑</span>

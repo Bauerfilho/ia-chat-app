@@ -244,7 +244,7 @@ code,kbd,.num{font-family:var(--mono); font-variant-numeric:tabular-nums}
 @keyframes sino-chega{from{transform:scale(.4);opacity:0}to{transform:scale(1);opacity:1}}
 
 .trilho-rodape{display:flex;flex-direction:column;gap:var(--u);padding-top:var(--u2);
-  border-top:1px solid rgba(232,206,142,.10);width:44px;align-items:center}
+  border-top:1px solid rgba(232,206,142,.10);width:60px;align-items:center}
 .trilho-btn{width:34px;height:34px;display:grid;place-items:center;cursor:pointer;
   background:transparent;border:1px solid transparent;border-radius:var(--raio-p);
   color:var(--palha-400);
@@ -255,15 +255,18 @@ code,kbd,.num{font-family:var(--mono); font-variant-numeric:tabular-nums}
 #btn-sino[data-ligado="sim"]{color:var(--ouro-claro);border-color:var(--ouro-fio);
   background:rgba(212,178,95,.08);box-shadow:0 0 14px -5px var(--ouro-claro)}
 #btn-sino:disabled{cursor:not-allowed;opacity:.42;filter:saturate(.35)}
+/* O sino sobe sem deslocar tema/gaveta: o rodapé cresce para cima. */
+#btn-sino{margin-block-end:var(--u2)}
 
-/* logo IASWARM — exatamente a grafia do provedor, em cima da luazinha */
-#btn-enxame{width:auto;min-width:34px;height:auto;padding:5px 4px;
-  flex-direction:column}
+/* Segunda rota: o wordmark histórico, comprimido para o trilho de 76 px. */
+#btn-enxame{width:60px;height:36px;padding:5px 3px}
+.enxame-logo-trilho{display:block;width:54px;height:auto;overflow:visible;
+  pointer-events:none}
+.enxame-logo-trilho text{font-family:"Avenir Next Condensed","Futura",
+  "Helvetica Neue",Helvetica,sans-serif;font-weight:700;letter-spacing:.055em}
+.enxame-logo-trilho-nucleo{fill:var(--ouro-claro);opacity:.96}
 #btn-enxame[aria-pressed="true"]{color:var(--ouro-claro);border-color:var(--ouro-fio);
   background:rgba(212,178,95,.12);box-shadow:0 0 14px -5px var(--ouro-claro)}
-.enxame-letreiro{display:block;font:700 8px/1 var(--corpo);
-  letter-spacing:.14em;color:var(--ouro-claro);
-  text-shadow:0 0 10px rgba(212,178,95,.45)}
 
 /* ── CABEÇALHO ──────────────────────────────────────────────────────────── */
 .cabeca{grid-area:cabeca;display:flex;align-items:center;gap:var(--u3);
@@ -1196,6 +1199,9 @@ html[data-enxame-modo="neon"] .enxame-term{background:#03060a}
             mask-image:linear-gradient(to right,transparent,#000 12px,#000 calc(100% - 16px),transparent)}
   .presenca li{scroll-snap-align:start;flex-shrink:0}
   .trilho-rodape{flex-direction:row;gap:6px;padding:0;border-top:none;width:auto;flex-shrink:0}
+  #btn-sino{margin-block-end:0}
+  #btn-enxame{width:56px;height:44px;padding:8px 3px}
+  .enxame-logo-trilho{width:50px}
 
   /* o cabeçalho em duas linhas: em 390 px, título + busca + estado na mesma
      linha espremiam a busca a 98 px (só a lupa cabia) e quebravam "31 KB" */
@@ -1255,7 +1261,6 @@ html[data-enxame-modo="neon"] .enxame-term{background:#03060a}
   .enxame-folha{padding:var(--u2)}
   .enxame-w-cab{grid-template-columns:15px 1fr auto;row-gap:6px}
   .enxame-tempo{display:none}
-  #btn-enxame{min-height:44px;padding:6px 8px}
   .enxame-det-grade{grid-template-columns:repeat(2,1fr)}
 }
 
@@ -1269,6 +1274,7 @@ html[data-enxame-modo="neon"] .enxame-term{background:#03060a}
   .pilula-cmd{padding:0 14px;min-height:44px;border-radius:22px}
   .aba{padding:14px 4px;min-height:44px}
   .trilho-btn{width:44px;height:44px}
+  #btn-enxame{min-width:56px;min-height:44px}
   .enviar{padding:0 var(--u3);min-height:48px}
   .msg-acao{display:inline-flex;align-items:center;justify-content:center;
     min-height:44px;min-width:44px;margin:-12px 0}

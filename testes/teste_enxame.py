@@ -168,7 +168,60 @@ def checa(nome: str, cond: bool, detalhe: str = "") -> None:
         print(f"  ✗ {nome}" + (f" — {detalhe}" if detalhe else ""))
 
 
-def porta_livre(inicio: int = 59110) -> int:
+def elemento_por_id(html: str, tag: str, ident: str) -> str:
+    """Extrai um elemento simples pelo id, incluindo abertura e fechamento."""
+    abertura = re.search(
+        rf'<{tag}\b(?=[^>]*\bid="{re.escape(ident)}")[^>]*>', html,
+        re.I,
+    )
+    if not abertura:
+        return ""
+    fim = html.find(f"</{tag}>", abertura.end())
+    return "" if fim < 0 else html[abertura.start():fim + len(tag) + 3]
+
+
+def rota_iaswarm_tem_wordmark(botao: str, documento: str) -> bool:
+    """Valida a rota compacta e rejeita o antigo letreiro textual."""
+    abertura = re.match(r"<button\b[^>]*>", botao, re.I)
+    svg = re.search(
+        r'<svg\b[^>]*\bclass="[^"]*\benxame-logo-trilho\b[^"]*"[^>]*>'
+        r'[\s\S]*?</svg>',
+        botao,
+        re.I,
+    )
+    if not abertura or not svg:
+        return False
+
+    cabecalho = abertura.group(0)
+    desenho = svg.group(0)
+    ids = re.findall(r'\bid="([^"]+)"', desenho)
+    documento_sem_botao = documento.replace(botao, "", 1)
+    ids_fora = set(re.findall(r'\bid="([^"]+)"', documento_sem_botao))
+    wordmark = re.search(r"<text\b[^>]*>\s*IASWARM\s*</text>", desenho, re.I)
+    filete = re.search(
+        r'<rect\b(?=[^>]*\bx="42")(?=[^>]*\bwidth="536")'
+        r'(?=[^>]*\bheight="3")[^>]*/?>',
+        desenho,
+        re.I,
+    )
+
+    return all((
+        'type="button"' in cabecalho,
+        'aria-controls="enxame"' in cabecalho,
+        'aria-pressed="false"' in cabecalho,
+        bool(wordmark),
+        bool(filete),
+        len(ids) >= 3,
+        len(ids) == len(set(ids)),
+        all(ident.startswith("iaswarm-trilho-") for ident in ids),
+        not (set(ids) & ids_fora),
+        'aria-hidden="true"' in desenho,
+        'focusable="false"' in desenho,
+        "enxame-letreiro" not in botao,
+    ))
+
+
+def porta_livre(inicio: int = 59900) -> int:
     for p in range(inicio, inicio + 60):
         with socket.socket() as s:
             try:
@@ -649,15 +702,37 @@ def main() -> int:
     checa("os dois botões da gaveta compartilham o mesmo gesto",
           "function botoesGaveta" in JS and "botoesGaveta().forEach" in JS)
 
-    checa("a logo IASWARM está escrita como o provedor escreve",
-          'id="btn-enxame"' in HTML and ">IASWARM</span>" in HTML)
-    # a logo fica ANTES da luazinha no rodapé do trilho — é o "em cima"
+    botao_enxame = elemento_por_id(HTML, "button", "btn-enxame")
+    checa("a rota inferior usa o wordmark SVG histórico com filete",
+          rota_iaswarm_tem_wordmark(botao_enxame, HTML),
+          "esperado button type=button + aria-controls + SVG prefixado; "
+          "letreiro textual não vale como logo")
+    falso_textual = (
+        '<button type="button" id="btn-enxame" aria-controls="enxame" '
+        'aria-pressed="false"><span>IASWARM</span></button>'
+    )
+    checa("controle negativo rejeita IASWARM escrito em span",
+          not rota_iaswarm_tem_wordmark(falso_textual, falso_textual))
+
+    # O rodapé inteiro é contrato: sino, rota, tema e gaveta, nessa ordem.
     rodape = HTML[HTML.index("trilho-rodape"):HTML.index("cabeca")]
-    checa("a logo fica acima da luazinha no markup",
-          rodape.index('id="btn-enxame"') < rodape.index('id="btn-tema"'),
-          "a ordem no trilho-rodape é o em-cima do desktop vertical")
+    ordem_rodape = [rodape.find(f'id="{ident}"') for ident in
+                    ("btn-sino", "btn-enxame", "btn-tema", "btn-gaveta")]
+    checa("o rodapé preserva sino, IASWARM, tema e gaveta nessa ordem",
+          all(pos >= 0 for pos in ordem_rodape)
+          and ordem_rodape == sorted(ordem_rodape),
+          repr(ordem_rodape))
     checa("clicar a logo troca a janela",
-          "function janelaEnxame" in JS and "$('#btn-enxame').addEventListener" in JS)
+          "function janelaEnxame" in JS
+          and JS.count("$('#btn-enxame').addEventListener") == 1
+          and "$('#btn-enxame').addEventListener('click', ()=> janelaEnxame())" in JS,
+          "a rota deve manter um único listener e passar por janelaEnxame()")
+    i_modo = JS.find("function janelaModo")
+    i_enxame = JS.find("function janelaEnxame", i_modo)
+    bloco_modo = JS[i_modo:i_enxame] if i_modo >= 0 and i_enxame > i_modo else ""
+    checa("o estado ativo da rota inferior nasce em janelaModo",
+          "$('#btn-enxame')" in bloco_modo
+          and "setAttribute('aria-pressed'" in bloco_modo)
     checa("a janela IASWARM existe no HTML", 'id="enxame"' in HTML and 'id="enxame-reatores"' in HTML)
     checa("a malha quadriculada dourada existe", ".enxame-malha{" in CSS
           and "repeating-linear-gradient" in CSS[CSS.index(".enxame-malha{"):CSS.index(".enxame-malha{")+500])

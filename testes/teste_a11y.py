@@ -177,6 +177,44 @@ def main() -> int:
     checa("o log do groupchat é região viva",
           'id="groupchat-fio" role="log" aria-live="polite"' in JS)
 
+    print("— sino e rota IASWARM têm contratos diferentes —")
+    sino = re.search(r'<button\b[^>]*\bid="btn-sino"[^>]*>', HTML)
+    rota = re.search(r'<button\b[^>]*\bid="btn-enxame"[^>]*>', HTML)
+    sino_abertura = sino.group(0) if sino else ""
+    rota_abertura = rota.group(0) if rota else ""
+    checa("o sino continua sendo switch com aria-checked",
+          'role="switch"' in sino_abertura
+          and 'aria-checked="false"' in sino_abertura
+          and "aria-pressed" not in sino_abertura)
+    checa("a rota IASWARM é botão nativo pressionável e controla a janela",
+          'type="button"' in rota_abertura
+          and 'aria-controls="enxame"' in rota_abertura
+          and 'aria-pressed="false"' in rota_abertura
+          and "aria-checked" not in rota_abertura
+          and 'role="switch"' not in rota_abertura)
+
+    i_modo = JS.find("function janelaModo")
+    i_enxame = JS.find("function janelaEnxame", i_modo)
+    modo = JS[i_modo:i_enxame] if i_modo >= 0 and i_enxame > i_modo else ""
+    checa("a rota ativa sincroniza pressed, current, rótulo e retorno à sala",
+          "setAttribute('aria-pressed'" in modo
+          and "setAttribute('aria-current', 'page')" in modo
+          and "removeAttribute('aria-current')" in modo
+          and "Janela do IASWARM aberta. Voltar à sala" in modo
+          and "Abrir a janela do IASWARM" in modo)
+
+    logo = re.search(
+        r'<svg\b[^>]*\bclass="[^"]*\benxame-logo-trilho\b[^"]*"[^>]*>'
+        r'[\s\S]*?</svg>',
+        HTML,
+    )
+    checa("o SVG do trilho é decorativo e não cria outra parada de foco",
+          bool(logo) and 'aria-hidden="true"' in logo.group(0)
+          and 'focusable="false"' in logo.group(0))
+    checa("a rota inferior não substitui o seletor superior de três modos",
+          "className = 'janela-modos'" in JS
+          and "['sala','enxame','groupchat']" in JS)
+
     print("— movimento —")
     bloco = re.search(r"@media \(prefers-reduced-motion:reduce\)\{(.*?)\n\}", CSS, re.S)
     checa("existe bloco de movimento reduzido", bool(bloco))

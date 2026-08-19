@@ -1869,7 +1869,16 @@ function janelaModo(pedido){
   if (enxame) enxame.hidden = modo !== 'enxame';
   if (groupchat) groupchat.hidden = modo !== 'groupchat';
   const btn = $('#btn-enxame');
-  if (btn) btn.setAttribute('aria-pressed', String(modo === 'enxame'));
+  if (btn){
+    const ativoEnxame = modo === 'enxame';
+    btn.setAttribute('aria-pressed', String(ativoEnxame));
+    if (ativoEnxame) btn.setAttribute('aria-current', 'page');
+    else btn.removeAttribute('aria-current');
+    btn.setAttribute('aria-label', ativoEnxame
+      ? 'Janela do IASWARM aberta. Voltar à sala'
+      : 'Abrir a janela do IASWARM');
+    btn.title = ativoEnxame ? 'Voltar à sala' : 'Abrir IASWARM';
+  }
   $$('.janela-modo').forEach(b=>{
     const ativo = b.dataset.modoJanela === modo;
     b.setAttribute('aria-pressed', String(ativo));

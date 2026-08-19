@@ -68,6 +68,14 @@ def main() -> int:
           bool(regra_trilho) and "display:none" not in regra_trilho.group(1),
           "com o trilho oculto, nada fecha a gaveta nem troca o tema")
     checa("o trilho vira faixa horizontal", "flex-direction:row" in estreito)
+    regra_rodape = re.search(r"\.trilho-rodape\{([^}]*)\}", estreito)
+    checa("o rodapé também vira faixa horizontal",
+          bool(regra_rodape)
+          and "flex-direction:row" in regra_rodape.group(1)
+          and "width:auto" in regra_rodape.group(1))
+    regra_sino = re.search(r"#btn-sino\{([^}]*)\}", estreito)
+    checa("a separação vertical do sino zera no trilho deitado",
+          bool(regra_sino) and "margin-block-end:0" in regra_sino.group(1))
     checa("a presença rola na horizontal",
           ".presenca{flex-direction:row" in estreito and "overflow-x:auto" in estreito)
     checa("a gaveta nasce fora da tela", "transform:translateX(100%)" in estreito)
@@ -124,6 +132,24 @@ def main() -> int:
         checa(f"{alvo} tem alvo de dedo ≥ 44 px",
               bool(regra) and any(v >= 44 for v in alturas),
               corpo or "sem regra")
+    logo_estreito = re.search(r"#btn-enxame\{([^}]*)\}", estreito)
+    corpo_logo_estreito = logo_estreito.group(1) if logo_estreito else ""
+    largura_logo = re.search(r"\bwidth:\s*(\d+)px", corpo_logo_estreito)
+    altura_logo = re.search(r"\bheight:\s*(\d+)px", corpo_logo_estreito)
+    checa("o botão IASWARM cabe na faixa e mantém 44 px de altura",
+          bool(largura_logo) and 44 <= int(largura_logo.group(1)) <= 56
+          and bool(altura_logo) and int(altura_logo.group(1)) >= 44,
+          corpo_logo_estreito or "sem regra")
+    logo_dedo = re.search(r"#btn-enxame\{([^}]*)\}", dedo)
+    corpo_logo_dedo = logo_dedo.group(1) if logo_dedo else ""
+    minimos_logo = {
+        nome: int(valor)
+        for nome, valor in re.findall(r"(min-(?:width|height)):\s*(\d+)px", corpo_logo_dedo)
+    }
+    checa("o IASWARM tem alvo coarse específico de pelo menos 44 px",
+          minimos_logo.get("min-width", 0) >= 44
+          and minimos_logo.get("min-height", 0) >= 44,
+          corpo_logo_dedo or "sem regra")
     checa("as ações da mensagem aparecem sem hover",
           ".msg-pe{opacity:1" in dedo,
           "no dedo não existe hover: escondê-las ali é escondê-las para sempre")
