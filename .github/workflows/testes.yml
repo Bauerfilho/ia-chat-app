@@ -160,6 +160,8 @@ jobs:
       - name: a bateria inteira
         if: steps.nucleo.outputs.tem == '1'
         working-directory: ia-chat-app
+        env:
+          PERNA: ${{ matrix.interpretador }}
         run: |
           set -u
           set -o pipefail
@@ -173,13 +175,22 @@ jobs:
           # "roda" um arquivo chamado `teste_*.py`: o CI reprovaria, sim, mas pelo
           # motivo errado e com a mensagem errada. Com ele, zero é zero.
           shopt -s nullglob
+          EXECUTOR=("$PY")
+          if [ "$PERNA" = "moderno" ]; then
+            # O runner hospedado não tem UI para responder ao alerta de Local
+            # Network Privacy. macOS libera command-line tools root por desenho;
+            # `-n` garante que senha/prompt nunca vire job pendurado. A perna
+            # sistema continua não-root e mede permissões/comportamento normal.
+            EXECUTOR=(sudo -n -E env "HOME=$HOME" "$PY")
+            "${EXECUTOR[@]}" -c 'import os; assert os.geteuid() == 0'
+          fi
           LOGS="$RUNNER_TEMP/logs"; mkdir -p "$LOGS"
           encontrados=0; executados=0; falharam=0; declarados=0
           linhas=""
           for f in testes/teste_*.py; do
             encontrados=$((encontrados + 1))
             nome="$(basename "$f" .py)"
-            if "$PY" "$f" > "$LOGS/$nome.log" 2>&1; then estado="✔"; else
+            if "${EXECUTOR[@]}" "$f" > "$LOGS/$nome.log" 2>&1; then estado="✔"; else
               estado="✗"; falharam=$((falharam + 1)); fi
             executados=$((executados + 1))
             # ⊘ é como um teste desta casa declara "não aplicável neste sistema".
